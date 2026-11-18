@@ -48,6 +48,15 @@ with torch.no_grad():
         print(f"[1] M=1 G={G:2d}: chunked={got.item():.6f} released={ref:.6f} diff={abs(got.item() - ref):.2e}")
         assert abs(got.item() - ref) < 1e-3, "ChunkedNCM does not reproduce the released model"
 
+    # per-level (teacher-forced generation layout) loss == single dense-mask loss, M > 1
+    c4 = codes.view(2, 4, -1).long()
+    for G in (0, 1, 3, 6, model.K):
+        fast, sf = model.forward_loss(c4, G)
+        dense, sd_ = model.forward_loss(c4, G, dense=True)
+        lv = max(abs(p - q) for p, q in zip(sf["per_level"], sd_["per_level"]))
+        print(f"[4] M=4 G={G:2d}: per-level={fast.item():.6f} dense={dense.item():.6f} max level diff={lv:.2e}")
+        assert abs(fast.item() - dense.item()) < 1e-3 and lv < 1e-3, "per-level path != dense path"
+
     # round trip
     rt = model.decode_tokens(codes.view(8, 1, -1))
     match = np.mean([np.mean([a_ == b_ for a_, b_ in zip(r, d)]) for r, d in zip(rt, docs)])

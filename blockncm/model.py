@@ -141,8 +141,67 @@ class ChunkedNCM(nn.Module):
         return self.net.transformer.ln_f(h)
 
     # ------------------------------------------------------------------ training
-    def forward_loss(self, codes, G):
-        """codes: (B, M, 1 + sum(lt)) long. Returns (mean NLL over all target codes, stats dict)."""
+    def forward_loss(self, codes, G, dense=False):
+        """codes: (B, M, 1 + sum(lt)) long. Returns (mean NLL over all target codes, stats dict).
+
+        Default path: one short sequence per level, built with the *generation* layouts
+        (`_gen_layout`), i.e. teacher-forced generation. Because the mask is block-structured
+        (a level sees only the prefix, the plan and itself, and the plan sees only the prefix and
+        itself), this is exactly equal to the single dense-mask sequence (`dense=True`), but costs
+        sum_t (P + M*l_t)^2 attention instead of (P + M*sum l_t)^2.
+        """
+        if dense:
+            return self._forward_loss_dense(codes, G)
+        B, M, L = codes.shape
+        dev = codes.device
+        flat = codes.reshape(B * M, L)
+        with torch.no_grad():
+            X = self.vq.idx_to_ncm_input(flat)
+        D = X.shape[-1]
+        X = X.view(B, M, -1, D)
+        Y = flat[:, self.l0:].view(B, M, -1)
+        pre = self._prefix_emb(B, dev)
+        emb = []
+        for t, l in enumerate(self.lt):
+            o = self.offsets[t]
+            cid = torch.arange(M, device=dev).repeat_interleave(l)
+            emb.append(self._embed(X[:, :, o:o + l].reshape(B, M * l, D).to(pre.dtype), t, cid))
+        plan = emb[G - 1] if 0 < G < self.K else None
+
+        nll_sum, n_tok, per_level = 0.0, 0, []
+        g_sum = g_n = l_sum = l_n = 0.0
+        for t, l in enumerate(self.lt):
+            mask, rope = self._gen_layout(M, G, t, dev)
+            if t < G:
+                hs = self._run(torch.cat([pre, emb[t]], 1), mask, rope)[:, self.P:]  # (B, M*l)
+                tgt = Y[:, :, self.offsets[t]:self.offsets[t] + l].reshape(B, M * l)
+            else:
+                seq = [pre.repeat_interleave(M, 0)]
+                if plan is not None:
+                    seq.append(plan.repeat_interleave(M, 0))
+                seq.append(emb[t].view(B, M, l, -1).reshape(B * M, l, -1))
+                hs = self._run(torch.cat(seq, 1), mask, rope)[:, -l:]  # (B*M, l)
+                tgt = Y[:, :, self.offsets[t]:self.offsets[t] + l].reshape(B * M, l)
+            logits = self.net.lm_heads[t](hs).float()
+            nll = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), tgt.reshape(-1), reduction="sum")
+            nll_sum = nll_sum + nll
+            n = B * M * l
+            n_tok += n
+            v = nll.item()
+            per_level.append(v / n)
+            if t < G:
+                g_sum += v; g_n += n
+            else:
+                l_sum += v; l_n += n
+        stats = {
+            "nll": nll_sum.item() / n_tok,
+            "nll_global": g_sum / g_n if g_n else float("nan"),
+            "nll_local": l_sum / l_n if l_n else float("nan"),
+            "per_level": per_level,
+        }
+        return nll_sum / n_tok, stats
+
+    def _forward_loss_dense(self, codes, G):
         B, M, L = codes.shape
         dev = codes.device
         flat = codes.reshape(B * M, L)
