@@ -1,0 +1,308 @@
+% =====================================================================
+% Complexity analysis and factorization bound for Hierarchical Block-NCM
+% Every number in this section is reproduced by
+%   py paper/scripts/complexity_constants.py [--N --M --C --K --d --Lx]
+% =====================================================================
+
+\section{Complexity Analysis and Factorization Bound}
+\label{sec:complexity}
+
+\subsection{Setup and notation}
+\label{sec:notation}
+
+A prompt $X$ of length $L_x$ is followed by an output $Y$ of $N$ tokens.
+Generation proceeds over $K$ hierarchy levels $k\in\{1,\dots,K\}$ with scale
+factors $s_k\in(0,1]$, $s_K=1$: level $k$ of the monolithic model contains
+$s_kN$ positions. We write
+\begin{equation}
+  S_k=\sum_{j\le k}s_j,\qquad
+  \sigma_1=\sum_{k=1}^{K}s_k,\qquad
+  \sigma_2=\begin{cases}
+    \sum_{k}s_kS_k=\tfrac12\big(\sigma_1^2+\sum_{k}s_k^2\big) & \text{block-causal},\\[2pt]
+    \sum_{k}s_k^2 & \text{block-diagonal}.
+  \end{cases}
+  \label{eq:sigmas}
+\end{equation}
+Here $\sigma_2N^2$ counts the query--key pairs between output positions
+(Assumption~\ref{as:mask}). The block-causal identity holds because
+$\sum_k s_kS_k$ sums over all pairs $j\le k$, so it equals half the sum over
+all ordered pairs plus half the diagonal.
+For the geometric schedule $s_k=2^{-(K-k)}$ with block-causal attention,
+$\sigma_1=2-2^{1-K}$ and $\sigma_2=\tfrac12\big[\sigma_1^2+\tfrac43(1-4^{-K})\big]$; at
+$K=6$, $\sigma_1=1.969$, $\sigma_2=2.604$ and $\sigma_1/\sigma_2=0.756$.
+The released NCM TinyStories configuration generates levels of length
+$(8,16,24,32,40,52,64,76,92,108,128)$ after a single-position level~0, with
+block-diagonal attention; there $N=128$ latent positions, $\sigma_1=5.000$ and
+$\sigma_2=3.211$.
+
+\emph{Block-NCM} splits $Y$ into $M$ blocks $B_1,\dots,B_M$ of equal length
+$N/M$. Block $m$ is conditioned on $X$ and on a global blueprint
+$P=(P_1,\dots,P_M)$ of $MC$ discrete codes ($C$ per block). All blocks are
+folded into the batch dimension and decoded concurrently.
+
+\paragraph{Cost model.} A transformer layer of width $d$ spends
+$c_{\mathrm{lin}}d^2$ FLOPs per processed token on projections and MLP
+($c_{\mathrm{lin}}=24$ for a $4\times$ MLP, counting 2 FLOPs per multiply-add) and
+$4d$ FLOPs per query--key pair on attention ($QK^\top$ and $AV$). We ignore
+softmax, normalization and embedding costs. All quantities below are per layer;
+they scale linearly with depth, which cancels in every ratio.
+
+\paragraph{Assumptions.}
+\begin{enumerate}[label=(A\arabic*),leftmargin=*,itemsep=1pt]
+  \item \label{as:mask} \emph{Level-wise generation.} At level $k$, only the
+  $s_kN$ positions of that level issue queries. They attend to the prompt and
+  either to all positions of levels $j\le k$, whose keys and values are cached
+  (\emph{block-causal}), or to level $k$ only (\emph{block-diagonal}). The
+  released NCM configurations use block-diagonal attention and no cross-level
+  cache: earlier levels reach level $k$ only through the running reconstruction
+  $\hat z$, area-pooled to length $s_kN$ (\texttt{models/next\_concept.py},
+  \texttt{models/quant.py}).
+  \item \label{as:block} \emph{Block-local attention.} In Block-NCM, the level-$k$
+  queries of block $m$ attend to $X$, to the full blueprint $P$, and to the
+  same set of levels as in \ref{as:mask}, restricted to block $m$.
+  \item \label{as:equal} \emph{Equal block lengths.} All blocks have length $N/M$;
+  variable-length blocks would need padding or length codes in $P$.
+\end{enumerate}
+
+\subsection{Attention FLOPs}
+
+\begin{proposition}[Attention cost]
+\label{prop:attn}
+Under \ref{as:mask}--\ref{as:equal} with block-causal attention, the per-layer
+attention FLOPs are given below. For block-diagonal attention, replace $S_k$ by
+$s_k$; the closed forms are unchanged with $\sigma_2$ taken from
+\eqref{eq:sigmas}.
+\begin{align}
+  A_{\mathrm{mono}}
+  &= 4d\sum_{k=1}^{K}(s_kN)\big(L_x+S_kN\big)
+   = 4d\big(N^2\sigma_2+NL_x\sigma_1\big),
+  \label{eq:attn-mono}\\
+  A_{\mathrm{block}}
+  &= 4d\,M\sum_{k=1}^{K}\Big(s_k\frac{N}{M}\Big)\Big(L_x+MC+S_k\frac{N}{M}\Big)
+   = 4d\Big(\frac{N^2\sigma_2}{M}+N\,(L_x+MC)\,\sigma_1\Big).
+  \label{eq:attn-block}
+\end{align}
+\end{proposition}
+
+\begin{proof}
+At level $k$ the monolithic model has $s_kN$ queries, each attending to $L_x$
+prompt keys and $\sum_{j\le k}s_jN=S_kN$ output keys, at $4d$ FLOPs per pair;
+summing over $k$ gives \eqref{eq:attn-mono}. In Block-NCM each of the $M$
+blocks has $s_kN/M$ queries at level $k$, attending to $L_x+MC$ shared keys and
+$S_kN/M$ block-local keys. Multiplying by $M$ and summing over $k$ gives
+\eqref{eq:attn-block}.
+\end{proof}
+
+\begin{corollary}[Attention ratio and optimal block count]
+\label{cor:ratio}
+With $L_x=0$,
+\begin{equation}
+  r_{\mathrm{attn}}
+  \;=\;\frac{A_{\mathrm{block}}}{A_{\mathrm{mono}}}
+  \;=\;\frac1M+\frac{MC}{N}\cdot\frac{\sigma_1}{\sigma_2}.
+  \label{eq:ratio}
+\end{equation}
+For fixed $K$, $\{s_k\}$ and $C$, $r_{\mathrm{attn}}\to 1/M$ if and only if
+$M^2C=o(N)$. The block count that minimizes $A_{\mathrm{block}}$ is
+\begin{equation}
+  M^\star=\sqrt{\frac{N\sigma_2}{C\sigma_1}},
+  \label{eq:mstar}
+\end{equation}
+and it does not depend on $L_x$.
+\end{corollary}
+
+\begin{proof}
+Divide \eqref{eq:attn-block} by \eqref{eq:attn-mono} with $L_x=0$. For
+\eqref{eq:mstar}, the part of $A_{\mathrm{block}}$ that depends on $M$ is
+$N^2\sigma_2/M+NMC\sigma_1$, which is convex in $M>0$; setting its derivative
+to zero gives $M^\star$.
+\end{proof}
+
+For $N=2048$, $M=8$, $C=8$, $K=6$ (geometric), \eqref{eq:ratio} gives
+$r_{\mathrm{attn}}=0.125+0.024=0.149$: a $6.7\times$ reduction rather than
+$8\times$, with $M^\star\approx18$. A non-zero prompt weakens the reduction:
+$L_x=256$ gives $r_{\mathrm{attn}}=0.222$ ($4.5\times$).
+
+\subsection{End-to-end FLOPs}
+
+Attention is only part of the cost. The monolithic model processes $N\sigma_1$
+output tokens, plus $L_x$ prompt tokens during prefill. Block-NCM processes the
+same output tokens plus the $MC$ blueprint codes (and $ML_x$ prompt tokens
+unless the prompt prefix is shared across the batch). Let
+\begin{equation}
+  \phi=\frac{A_{\mathrm{mono}}}{A_{\mathrm{mono}}+c_{\mathrm{lin}}d^2N\sigma_1}
+  =\frac{N\sigma_2}{N\sigma_2+6d\sigma_1}\qquad(L_x=0,\ c_{\mathrm{lin}}=24)
+  \label{eq:phi}
+\end{equation}
+be the attention share of monolithic FLOPs. Then
+\begin{equation}
+  r_{\mathrm{total}}
+  =(1-\phi)\Big(1+\frac{MC}{N\sigma_1}\Big)+\phi\,r_{\mathrm{attn}}.
+  \label{eq:rtotal}
+\end{equation}
+Because $\phi<1$ whenever $N$ is not much larger than $d$, the end-to-end
+reduction is far smaller than $M$ (Table~\ref{tab:constants}). The stage-0
+planner and the boundary verifier add further cost on top of
+\eqref{eq:rtotal}; both must be measured and reported.
+
+\subsection{KV-cache and activation memory}
+
+Let $b$ be the bytes per element and $g\le1$ the grouped-query reduction
+factor. The KV cache at the last level holds $2gdb$ bytes per resident token
+per layer.
+
+\begin{proposition}[KV cache is not reduced]
+\label{prop:kv}
+When all $M$ blocks are resident concurrently, the number of cached tokens is
+\begin{align}
+  T_{\mathrm{mono}}&=L_x+N_{\mathrm{res}},\\
+  T_{\mathrm{block}}&=\underbrace{L_x\ \text{or}\ ML_x}_{\text{prefix shared / copied}}
+  +\underbrace{MC\ \text{or}\ M^2C}_{\text{blueprint shared / copied}}
+  +N_{\mathrm{res}}\;\;\ge\;T_{\mathrm{mono}},
+\end{align}
+where $N_{\mathrm{res}}=N\sigma_1$ for block-causal attention with a cross-level
+cache and $N_{\mathrm{res}}=N$ for block-diagonal attention.
+\end{proposition}
+
+\begin{proof}
+Each output position at each level is cached exactly once in both models,
+because block-local attention changes \emph{which} keys a query reads, not how
+many keys exist. Block-NCM additionally caches the blueprint, and also copies
+the prompt and the blueprint per block unless they are shared.
+\end{proof}
+
+\begin{remark}[Where the $1/M$ appears in memory]
+The quantity that does shrink by roughly $M$ is the attention score matrix at
+level $K$: $N(L_x+N\sigma_1)$ entries per head for the monolithic model, versus
+$N(L_x+MC)+N^2\sigma_1/M$ for Block-NCM. Fused kernels such as
+FlashAttention or PyTorch SDPA never materialize this matrix, so with them
+peak memory is dominated by weights, activations and the KV cache, and we
+expect no material reduction in peak VRAM from blocking.
+Experiment~1 therefore reports peak memory with fused and with unfused
+attention separately.
+\end{remark}
+
+\begin{remark}[Sequential passes]
+Monolithic NCM performs $K$ sequential forward passes. Block-NCM performs $K$
+passes plus the stage-0 planner's passes. If the planner emits the $MC$
+blueprint codes autoregressively, it adds up to $MC$ sequential passes, which
+exceeds $K$ for typical settings ($MC=64$). A single-pass or $O(\log(MC))$-pass
+planner is required for the latency argument to hold.
+\end{remark}
+
+\begin{table}[t]
+\centering
+\caption{Analytical cost ratios, Block-NCM vs.\ monolithic NCM ($M=8$).
+Top: hypothetical long-sequence model ($C=8$, $K=6$, geometric scales,
+block-causal). Bottom: the released TinyStories configuration ($d=768$,
+block-diagonal, levels $8,\dots,128$, $L_x=1$, $C=1$). Ratios below 1 favour
+Block-NCM. Reproduced by \texttt{scripts/complexity\_constants.py}.}
+\label{tab:constants}
+\small
+\begin{tabular}{@{}rrrcccc@{}}
+\toprule
+$N$ & $d$ & $L_x$ & $r_{\mathrm{attn}}$ & $\phi$ & $r_{\mathrm{total}}$ & KV ratio (shared / copied)\\
+\midrule
+2048 & 1024 & 0   & 0.149 & 0.306 & 0.751 & 1.016 / 1.127\\
+2048 &  768 & 0   & 0.149 & 0.370 & 0.695 & 1.016 / 1.127\\
+2048 & 1024 & 256 & 0.222 & 0.312 & 0.767 & 1.015 / 1.537\\
+8192 &  768 & 0   & 0.131 & 0.702 & 0.391 & 1.004 / 1.032\\
+\midrule
+ 128 &  768 & 1   & 0.232 & 0.018 & 0.999 & 1.062 / 1.550\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{remark}[Released NCM checkpoints]
+At the released scale ($N=128$ latent positions, $d=768$), attention is
+$\phi\approx1.8\%$ of generator FLOPs. Block partitioning still cuts attention
+by $4.3\times$, but saves under $1\%$ of FLOPs end to end for any
+$M\in\{2,4,8\}$. The complexity benefit of
+Block-NCM therefore appears only for outputs much longer than the
+128-position context of the released tokenizers.
+\end{remark}
+
+% ---------------------------------------------------------------------
+\subsection{Quality cost of block factorization}
+\label{sec:kl}
+
+Let $p$ be the data distribution and assume the blueprint is a deterministic
+encoding of the output, $P=f(Y)$ (e.g.\ the stage-0 tokenizer applied to the
+ground-truth blocks). The model is
+\begin{equation}
+  q(P,Y\mid X)=q_\theta(P\mid X)\prod_{m=1}^{M}q_\theta(B_m\mid X,P),
+  \qquad q(Y\mid X)=\sum_{P}q(P,Y\mid X).
+\end{equation}
+Write $p_m(\cdot\mid X,P)$ for the true marginal of block $m$ given $(X,P)$.
+
+\begin{theorem}[Three-term decomposition]
+\label{thm:kl}
+\begin{align}
+  \mathbb{E}_X\,D_{\mathrm{KL}}\big(p(Y\!\mid\!X)\,\Vert\,q(Y\!\mid\!X)\big)
+  \;\le\;&
+  \underbrace{\mathbb{E}_X\,D_{\mathrm{KL}}\big(p(P\!\mid\!X)\,\Vert\,q_\theta(P\!\mid\!X)\big)}_{\text{planner error}}
+  \;+\;
+  \underbrace{\mathbb{E}_{X,P}\sum_{m=2}^{M}I\big(B_m;B_{1:m-1}\mid X,P\big)}_{\text{factorization cost (total correlation)}}
+  \nonumber\\
+  &+\;
+  \underbrace{\mathbb{E}_{X,P}\sum_{m=1}^{M}D_{\mathrm{KL}}\big(p_m(\cdot\!\mid\!X,P)\,\Vert\,q_\theta(B_m\!\mid\!X,P)\big)}_{\text{block-model error}}.
+  \label{eq:kl}
+\end{align}
+\end{theorem}
+
+\begin{proof}
+Since $P=f(Y)$ under $p$, the joint $p(P,Y\mid X)=p(Y\mid X)\,\mathbb{1}[P=f(Y)]$
+has $Y$-marginal $p(Y\mid X)$. Marginalizing out $P$ cannot increase KL
+divergence (data-processing inequality), so
+$D_{\mathrm{KL}}(p(Y|X)\Vert q(Y|X))\le D_{\mathrm{KL}}(p(P,Y|X)\Vert q(P,Y|X))$.
+The chain rule splits the right-hand side into
+$D_{\mathrm{KL}}(p(P|X)\Vert q_\theta(P|X))
+ +\mathbb{E}_{P}\,D_{\mathrm{KL}}\big(p(Y|X,P)\,\Vert\,\textstyle\prod_m q_\theta(B_m|X,P)\big)$.
+For the second term, with every expectation taken under $p(\cdot\mid X,P)$,
+\begin{align*}
+  D_{\mathrm{KL}}\Big(p\,\Big\Vert\,\prod_m q_\theta\Big)
+  &=\mathbb{E}\Big[\log\frac{p(B_{1:M})}{\prod_m p_m(B_m)}\Big]
+   +\sum_m\mathbb{E}\Big[\log\frac{p_m(B_m)}{q_\theta(B_m)}\Big]\\
+  &=\mathrm{TC}(B_{1:M}\mid X,P)+\sum_m D_{\mathrm{KL}}(p_m\Vert q_\theta),
+\end{align*}
+and the chain rule of mutual information gives
+$\mathrm{TC}(B_{1:M}\mid X,P)=\sum_{m=2}^{M}I(B_m;B_{1:m-1}\mid X,P)$.
+Taking expectations over $X$ and $P$ completes the proof.
+\end{proof}
+
+\begin{corollary}[Irreducible cost]
+\label{cor:irreducible}
+Over all block decoders that factorize given $P$, the block-model error is
+minimized (to zero) by $q_\theta(B_m\mid X,P)=p_m(B_m\mid X,P)$. The
+total-correlation term is therefore a lower limit on what a factorized decoder
+can achieve with a given blueprint, independent of model capacity.
+\end{corollary}
+
+\begin{remark}[Richer blueprints]
+At the extreme $P=Y$ the total correlation is zero. In general, however,
+conditioning on more information can \emph{increase} conditional mutual
+information, so ``a richer blueprint reduces inter-block dependence'' is not a
+theorem. It is a hypothesis about the data, and we test it empirically. The
+hypothesis is most plausible for code, where function signatures and type
+contracts in $P$ fix the interface between bodies, and least plausible for
+prose with long-range co-reference.
+\end{remark}
+
+\paragraph{Empirical estimator.} Let $r_\psi(Y\mid X,P)$ be a
+blueprint-conditioned autoregressive model trained on the same data. The
+per-token negative log-likelihood (NLL) gap
+\begin{equation}
+  \widehat{\Delta}
+  =\frac1N\,\mathbb{E}_p\Big[-\sum_m\log q_\theta(B_m\mid X,P)\Big]
+  -\frac1N\,\mathbb{E}_p\big[-\log r_\psi(Y\mid X,P)\big]
+\end{equation}
+satisfies
+$N\widehat{\Delta}=\mathrm{TC}+\sum_m D_{\mathrm{KL}}(p_m\Vert q_\theta)
+ -D_{\mathrm{KL}}(p\Vert r_\psi)$, hence
+\begin{equation}
+  \mathbb{E}_{X,P}\,\mathrm{TC}(B_{1:M}\mid X,P)
+  \;\le\;N\widehat{\Delta}+\mathbb{E}_{X,P}\,D_{\mathrm{KL}}(p\,\Vert\,r_\psi).
+\end{equation}
+We report $\widehat{\Delta}$ in bits per token as a function of $M$ and of the
+domain (prose vs.\ code). When $r_\psi$ is a strong model, small
+$\widehat{\Delta}$ is evidence that the factorization cost is small.
