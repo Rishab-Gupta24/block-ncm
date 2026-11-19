@@ -85,7 +85,9 @@ end-of-text for 400 AR tokens (457 tokens on average, our samples: about 425).
 
 AR sequential steps are the AR model's own tokens: 1.011 GPT-Neo tokens per BPE-8192 token on TinyStories (500 real
 stories, sd 0.023), so 457 BPE tokens ≈ 462 steps. The script's `max_new_tokens` cap (784) only bounds generation;
-samples are then cut to 512 BPE tokens, well inside TinyStories-33M's 2,048-position context.
+samples are then cut to 512 BPE tokens (≈ 517 AR tokens). TinyStories-33M's config lists 2,048 positions, but it is
+reported to have been trained on 512-token contexts (local attention window 256); our samples stay within that
+(mean 462, at most about 517 AR tokens), so AR is evaluated at 512 tokens only, not at 768.
 † The NCM paper counts 12 function evaluations at 128 tokens. Level 0 (1 code) is drawn from a stored unigram table,
 not a transformer pass, so it is 11 transformer passes, as in the 512-token rows.
 
