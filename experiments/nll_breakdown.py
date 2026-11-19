@@ -72,7 +72,7 @@ def window(i):
 
 toks = torch.tensor([window(i) for i in vidx]).view(len(vidx), a.M, C)
 with torch.no_grad():  # sanity check: re-encoding the first docs reproduces the stored codes
-    n_chk = 32
+    n_chk = min(32, len(val))
     chk = model.vqvae.encode(toks[:n_chk].reshape(-1, C).cuda()).view(n_chk, a.M, -1).cpu().numpy()
     per_doc = (chk == val[:n_chk]).reshape(n_chk, -1).mean(1)
     lvl0 = (chk[..., :model.l0] == val[:n_chk, :, :model.l0]).mean()

@@ -144,6 +144,8 @@ def evaluate():
         codes = torch.from_numpy(val[s:s + a.bs].astype(np.int64)).cuda()
         with torch.autocast("cuda", dtype=AMP or torch.float32, enabled=AMP is not None):
             _, st = model.forward_loss(codes, a.G)
+        if not math.isfinite(st["nll"]):  # nll_global/local are nan by design when G=0 or G=K; nll never is
+            raise RuntimeError(f"non-finite validation loss {st['nll']} (autocast {AMP}): numerical overflow")
         w = len(codes)
         for k in tot:
             tot[k] += (st[k] if not math.isnan(st[k]) else 0.0) * w
@@ -167,6 +169,8 @@ for step in range(a.steps):
         codes = batch(train, np.random.randint(0, len(train), a.bs))
         with torch.autocast("cuda", dtype=AMP or torch.float32, enabled=AMP is not None):
             loss, st = model.forward_loss(codes, a.G)
+        if not torch.isfinite(loss):
+            raise RuntimeError(f"non-finite training loss at step {step} (autocast {AMP}): numerical overflow")
         scaler.scale(loss / a.accum).backward()
     scaler.unscale_(opt)
     gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)

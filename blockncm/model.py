@@ -24,6 +24,17 @@ from torch.utils.checkpoint import checkpoint
 
 from blockncm.load import NCM_ROOT  # noqa: F401  (puts the NCM repo on sys.path)
 from models.common import precompute_rope_cos_sin  # noqa: E402
+import contextlib  # noqa: E402
+
+
+def vq_ctx():
+    """Run the tokenizer's quantizer in fp32 under fp16 autocast: its convolutions produce NaN in fp16 (found on a
+    Kaggle T4, which has no bf16). Under bf16 autocast or none, nothing changes."""
+    try:
+        fp16 = torch.is_autocast_enabled("cuda") and torch.get_autocast_dtype("cuda") == torch.float16
+    except TypeError:  # older torch
+        fp16 = torch.is_autocast_enabled() and torch.get_autocast_gpu_dtype() == torch.float16
+    return torch.autocast("cuda", enabled=False) if fp16 else contextlib.nullcontext()
 
 PREFIX, GLOBAL, LOCAL = 0, 1, 2
 
@@ -183,7 +194,8 @@ class ChunkedNCM(nn.Module):
         dev = codes.device
         flat = codes.reshape(B * M, L)
         with torch.no_grad():
-            X = self.vq.idx_to_ncm_input(self._corrupt_inputs(flat))
+            with vq_ctx():
+                X = self.vq.idx_to_ncm_input(self._corrupt_inputs(flat))
         D = X.shape[-1]
         X = X.view(B, M, -1, D)
         Y = flat[:, self.l0:].view(B, M, -1)  # clean targets
@@ -240,7 +252,8 @@ class ChunkedNCM(nn.Module):
         dev = codes.device
         flat = codes.reshape(B * M, L)
         with torch.no_grad():
-            X = self.vq.idx_to_ncm_input(self._corrupt_inputs(flat))  # (B*M, T, D) next-level inputs
+            with vq_ctx():
+                X = self.vq.idx_to_ncm_input(self._corrupt_inputs(flat))  # (B*M, T, D) next-level inputs
         D = X.shape[-1]
         X = X.view(B, M, -1, D)
         Y = flat[:, self.l0:].view(B, M, -1)
@@ -296,8 +309,10 @@ class ChunkedNCM(nn.Module):
         pre = self._prefix_emb(B, device)
         plan_h = None
         for t, l in enumerate(self.lt):
-            zq = self.vq.embeddings[t](idx)
-            z_hat, x = self.vq.get_next_autoregressive_input(t, z_hat, zq)  # (B*M, l, D)
+            with vq_ctx():
+                zq = self.vq.embeddings[t](idx)
+            with vq_ctx():
+                z_hat, x = self.vq.get_next_autoregressive_input(t, z_hat, zq)  # (B*M, l, D)
             cid = torch.arange(M, device=device).repeat_interleave(l)
             h = self._embed(x.reshape(B, M * l, D).to(pre.dtype), t, cid)  # rows are b-major, chunk-minor
             mask, rope = self._gen_layout(M, G, t, device)

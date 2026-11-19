@@ -31,7 +31,7 @@ log() { echo "=== $* $(date -u +%H:%M:%S)" | tee -a $OUT/progress.txt; }
 quiet() { grep -v "parameter count" || true; }
 # check <expected file> <stage log>: on a missing output, print the stage log's tail (the traceback)
 check() {
-  if [ -s "$1" ]; then echo "    ok: $1" | tee -a $OUT/progress.txt
+  if [ -s "$1" ] && ! grep -qiE "loss nan|non-finite|Traceback" "$2"; then echo "    ok: $1" | tee -a $OUT/progress.txt
   else echo "    MISSING: $1 -- last lines of $2:" | tee -a $OUT/progress.txt; tail -30 "$2" | tee -a $OUT/progress.txt; FAIL=1; fi
 }
 

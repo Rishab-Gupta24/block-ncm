@@ -22,7 +22,7 @@ import torch
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
-from blockncm.model import ChunkedNCM, GLOBAL, LOCAL, PREFIX, build_mask  # noqa: F401
+from blockncm.model import ChunkedNCM, GLOBAL, LOCAL, PREFIX, build_mask, vq_ctx  # noqa: F401
 from models.common import apply_rotary_emb  # noqa: E402
 
 
@@ -132,7 +132,8 @@ class FastChunkedNCM(ChunkedNCM):
         dev = codes.device
         flat = codes.reshape(B * M, L)
         with torch.no_grad():
-            X = self.vq.idx_to_ncm_input(self._corrupt_inputs(flat))
+            with vq_ctx():
+                X = self.vq.idx_to_ncm_input(self._corrupt_inputs(flat))
         D = X.shape[-1]
         X = X.view(B, M, -1, D)
         Y = flat[:, self.l0:].view(B, M, -1)
@@ -204,8 +205,10 @@ class FastChunkedNCM(ChunkedNCM):
                 idx, z_hat = out[-1], z_hat[rows]
                 past = [(k[best], v[best]) for k, v in past]
                 pre, Bn = pre[best], B
-            zq = self.vq.embeddings[t](idx)
-            z_hat, x = self.vq.get_next_autoregressive_input(t, z_hat, zq)
+            with vq_ctx():
+                zq = self.vq.embeddings[t](idx)
+            with vq_ctx():
+                z_hat, x = self.vq.get_next_autoregressive_input(t, z_hat, zq)
             cid = torch.arange(M, device=device).repeat_interleave(l)
             h = self._embed(x.reshape(Bn, M * l, D).to(pre.dtype), t, cid)
             if t < G:
