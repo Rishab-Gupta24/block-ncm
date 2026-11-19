@@ -22,6 +22,44 @@ The README gives no TinyStories number to compare against; check the paper's tab
 
 See `docs/long_form_design.md` §6. Chunked training is feasible for M ∈ {2, 3, 4}; M = 6 is used for evaluation only.
 
+## 2026-11-19: Milestone 4, layer-drop refiner on Kaggle (T4, fp16, one seed)
+
+`kaggle/run_refiner.sh` in full mode: Kaggle notebook version 4, free T4, 2 h 38 min, all stages passed. It used a
+30,000-doc training subset and 285 val docs, so its absolute numbers **can't be compared with Milestone 3b**; compare
+only within this table.
+- **Teacher:** full-depth Ours G=3, lr 3e-5, corruption 0.5, 1,500 steps.
+- **Refiners:** 6 of the 12 blocks, layers [0, 1, 2, 9, 10, 11]. That's the best 6/12 pattern in the depth probe,
+  which reproduced the local result (symmetric +4.00 vs uniform +4.08 vs prefix +4.81 nats on levels 4–11 before
+  training).
+- **Refiner training:** each refiner is initialised from the teacher, trained 1,500 steps at lr 1e-4, and distilled
+  toward the teacher (KL weight 1.0).
+- **Variants:** `s4` replaces the teacher on local levels 4–11 (592 of 641 codes per chunk); `s7` on levels 7–11
+  (468 codes).
+
+| | Teacher (12/12) | Refiner s4 (6/12, levels 4–11) | Refiner s7 (6/12, levels 7–11) |
+|---|---|---|---|
+| NLL, non-padding | **1.6043** | 2.1064 | 1.9037 |
+| Δ vs teacher, 95% CI | — | +0.502 [+0.496, +0.508] | +0.299 [+0.294, +0.305] |
+| fine levels 4–11 | **1.307** | 1.850 | 1.631 |
+| genPPL (256 samples, M=4) | **21.6 ± 0.7** | 41.6 ± 0.3 | 32.0 ± 0.8 |
+| boundary / inner ratio | 1.35 | 1.24 | 1.29 |
+| entropy | 4.40 | 4.36 | 4.37 |
+| latency, s/sample (T4) | 0.083 | **0.053** (1.55× faster) | 0.060 (1.38× faster) |
+
+What this shows:
+- **The refiner doesn't pay off at this budget.** It's 1.4–1.55× faster per sample, but genPPL rises by 10–20 and NLL by
+  0.3–0.5 nats, with every document worse. Distillation recovered most of the untrained gap: +4.0 nats became +0.5.
+  But that falls far short of "near-free".
+- The lower seam ratio isn't a gain: the refiner degrades the inner windows too, so the ratio falls while every
+  absolute number gets worse.
+- **Consequence for the cost model:** the 0.25× and 0.15× refiner scenarios in `serving_cost.py` assumed no quality loss.
+  These results don't support that assumption, so treat those scenarios as hypothetical.
+- Next options, cheapest first:
+  - drop fewer layers (9/12);
+  - refine only the finest levels (≥ 9);
+  - distil much longer on all 125k docs.
+- The fp16 path on T4 was stable throughout: no non-finite losses, and the quantizer ran in fp32.
+
 ## 2026-11-19: Milestone 3b, M=4 runs on the corrected recipe (conditioning corruption 0.5, lr 3e-5, one seed)
 
 Same setup as Milestone 3 (1,500 steps × 8 documents, 125,723 train docs), now with corruption. These are the
