@@ -22,6 +22,32 @@ The README gives no TinyStories number to compare against; check the paper's tab
 
 See `docs/long_form_design.md` §6. Chunked training is feasible for M ∈ {2, 3, 4}; M = 6 is used for evaluation only.
 
+## 2026-11-19: Milestone 5, halo attention and the G sweep (same recipe and data as Milestone 3b, one seed)
+
+All runs: corruption 0.5, lr 3e-5, 1,500 steps, KV-cached plan (`--fast`). NLL from `nll_breakdown.py` on all
+1,228 val docs, non-padding codes; the B0/Ours G=3/B2 columns are the Milestone 3b runs.
+
+| | B0 (G=0) | Ours G=3 | **Ours G=3 + halo 4** | Ours G=5 | Ours G=6 | B2 (G=11) |
+|---|---|---|---|---|---|---|
+| total NLL | 1.7486 | 1.7438 | **1.7361** | 1.7377 | 1.7471 | 1.7780 |
+| coarse, levels 1–3 | 5.2730 | 5.2823 | 5.2689 | 5.1710 | 5.1660 | **5.1647** |
+| fine, levels 4–11 | 1.4616 | 1.4556 | **1.4484** | 1.4581 | 1.4686 | 1.5022 |
+| chunk 4 | 1.8040 | 1.7933 | **1.7843** | 1.7949 | 1.8146 | 1.8718 |
+| Δ vs B0, 95% CI | — | −0.0049 [−0.0056, −0.0042] | **−0.0127 [−0.0134, −0.0120]**, better on 85% of docs | −0.0111 [−0.0120, −0.0103] | −0.0018 [−0.0027, −0.0008] | +0.0292 |
+| genPPL, M=4 | 24.1 | 22.0 | **21.0** | pending | pending | **19.0** |
+| boundary / inner ratio | 1.52 | 1.39 | **1.19** | pending | pending | **1.17** |
+| entropy | 4.50 | 4.39 | 4.41 | | | 4.36 |
+
+What this shows:
+- **Halo attention nearly closes the seam gap.** Letting each chunk's local levels see 4 positions of each neighbour cuts
+  the boundary ratio from 1.39 to 1.19 (B2: 1.17); that's 95% of the B0→B2 gap. It also gives the best NLL of any
+  run. genPPL improves 22.0 → 21.0 (61% of the B0→B2 gap) but stays behind B2's 19.0. So seams were a large part of Ours's generation
+  gap, but not all of it.
+- **More global levels help only up to G=5.** G=5 matches B2 on the coarse levels (5.171 vs 5.165) and keeps most
+  of the fine-level gain. G=6 starts losing on fine levels (level 6 gets worse: 1.86 vs 1.68). The G=5/G=6
+  generation evals ran out of memory at batch 64 and are being re-run at batch 16.
+- Next combination to try: G=5 + halo 4.
+
 ## 2026-11-19: Milestone 4, layer-drop refiner on Kaggle (T4, fp16, one seed)
 
 `kaggle/run_refiner.sh` in full mode: Kaggle notebook version 4, free T4, 2 h 38 min, all stages passed. It used a
