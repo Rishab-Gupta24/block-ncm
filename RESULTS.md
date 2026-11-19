@@ -22,6 +22,43 @@ The README gives no TinyStories number to compare against; check the paper's tab
 
 See `docs/long_form_design.md` §6. Chunked training is feasible for M ∈ {2, 3, 4}; M = 6 is used for evaluation only.
 
+## 2026-11-19: Tokenizer level-skip probe (`experiments/level_skip_probe.py`, no generator, no training)
+
+Tests the "skip fine levels" part of the Cascade-NCM proposal: can the frozen residual VQ tokenizer reconstruct
+text when some levels are never produced? 1,024 real 128-token chunks (256 val docs, no padding). Each variant
+encodes, drops the levels, decodes, and compares tokens.
+- **requant:** re-run the residual quantizer without those levels, so later levels absorb the residual. This is
+  the best case, for a generator retrained on that tokenization.
+- **hole:** normal codes; the skipped levels are simply left out at decode time. This is what a generator trained
+  on the normal codes would face.
+
+Level numbers as in RESULTS.md (level 7 = l=64).
+
+| skipped levels | positions / chunk | requant: token acc | requant: exact chunks | hole: token acc | hole: exact chunks |
+|---|---|---|---|---|---|
+| none | 641 | 99.97% | 96.7% | 99.97% | 96.7% |
+| 11 (l=128) | 513 | 98.26% | 17.9% | 98.26% | 17.9% |
+| 10 | 533 | 99.95% | 93.8% | 99.93% | 92.5% |
+| 9 | 549 | 99.94% | 93.2% | 99.91% | 89.1% |
+| 8 | 565 | 99.91% | 90.7% | 99.86% | 85.1% |
+| 7 | 577 | 99.90% | 88.7% | 99.61% | 62.7% |
+| 7, 9 (6→8→10→11) | 485 | 99.78% | 77.5% | 99.14% | 36.7% |
+| **7, 8, 10 (Cascade: 6→9→11)** | **393** | **99.52%** | 57.0% | 98.41% | 14.4% |
+| 5, 7, 9 | 445 | 99.53% | 57.6% | 98.00% | 9.9% |
+| 7–10 (6→11) | 301 | 98.71% | 23.5% | 97.10% | 3.6% |
+| 4–10 (3→11) | 177 | 91.89% | 0% | 84.81% | 0% |
+
+What this shows:
+- **The tokenizer tolerates skipped intermediate levels; the last level is the one it can't lose.** Cascade's
+  6→9→11 keeps 99.5% of tokens (re-quantized) with 39% fewer positions. Skipping level 11 alone already costs
+  1.7%.
+- Re-quantizing matters: with the normal codes ("hole"), the same skip keeps 98.4%. That's still high per token,
+  but only 14% of chunks come back exactly. So a level-skipping generator would need codes from the skipped
+  tokenization, which means re-encoding the data.
+- These are upper bounds with perfect codes. The generator still has to predict levels 9 and 11 across a bigger
+  jump. Measured separately, cutting *depth* on these levels failed (Milestone 4). Level-skipping at full depth
+  remains open and is the cheaper idea to test next.
+
 ## 2026-11-19: Milestone 5, halo attention and the G sweep (same recipe and data as Milestone 3b, one seed)
 
 All runs: corruption 0.5, lr 3e-5, 1,500 steps, KV-cached plan (`--fast`). NLL from `nll_breakdown.py` on all
@@ -34,19 +71,42 @@ All runs: corruption 0.5, lr 3e-5, 1,500 steps, KV-cached plan (`--fast`). NLL f
 | fine, levels 4–11 | 1.4616 | 1.4556 | **1.4484** | 1.4581 | 1.4686 | 1.5022 |
 | chunk 4 | 1.8040 | 1.7933 | **1.7843** | 1.7949 | 1.8146 | 1.8718 |
 | Δ vs B0, 95% CI | — | −0.0049 [−0.0056, −0.0042] | **−0.0127 [−0.0134, −0.0120]**, better on 85% of docs | −0.0111 [−0.0120, −0.0103] | −0.0018 [−0.0027, −0.0008] | +0.0292 |
-| genPPL, M=4 | 24.1 | 22.0 | **21.0** | pending | pending | **19.0** |
-| boundary / inner ratio | 1.52 | 1.39 | **1.19** | pending | pending | **1.17** |
-| entropy | 4.50 | 4.39 | 4.41 | | | 4.36 |
+| genPPL, M=4 | 24.1 | 22.0 | 21.0 | 20.0 | 19.6 | **19.0** |
+| boundary / inner ratio, M=4 | 1.52 | 1.39 | 1.19 | 1.26 | 1.22 | **1.17** |
+| entropy, M=4 | 4.50 | 4.39 | 4.41 | 4.35 | 4.34 | 4.36 |
+| **genPPL, M=6** (trained on M=4) | 23.7 | 21.8 | **21.5** | 23.8 | 30.7 | 33.5 |
+| boundary / inner ratio, M=6 | 1.49 | 1.34 | 1.19 | 1.23 | 1.20 | **1.15** |
+| genPPL sd over 2 seeds, M=6 | 0.1 | 0.3 | 0.3 | 1.3 | 2.1 | 2.3 |
 
 What this shows:
 - **Halo attention nearly closes the seam gap.** Letting each chunk's local levels see 4 positions of each neighbour cuts
   the boundary ratio from 1.39 to 1.19 (B2: 1.17); that's 95% of the B0→B2 gap. It also gives the best NLL of any
   run. genPPL improves 22.0 → 21.0 (61% of the B0→B2 gap) but stays behind B2's 19.0. So seams were a large part of Ours's generation
   gap, but not all of it.
-- **More global levels help only up to G=5.** G=5 matches B2 on the coarse levels (5.171 vs 5.165) and keeps most
-  of the fine-level gain. G=6 starts losing on fine levels (level 6 gets worse: 1.86 vs 1.68). The G=5/G=6
-  generation evals ran out of memory at batch 64 and are being re-run at batch 16.
-- Next combination to try: G=5 + halo 4.
+- **At M=4, generation improves steadily with G** (22.0 → 20.0 → 19.6 → B2's 19.0), even though NLL is best at G=5
+  and G=6 starts losing on fine levels (level 6: 1.86 vs 1.68).
+- **At M=6, the ranking flips: the more chunks a model attends across, the worse it extrapolates.** All models were
+  trained on 4 chunks. B2 collapses from 19.0 to 33.5, and G=6 goes from 19.6 to 30.7, both with high seed
+  variance. G=5 degrades a little (20.0 → 23.8). Ours G=3 (21.8) and **G=3 + halo 4 (21.5) hold their M=4
+  quality and become the best models.** Halo keeps its seam benefit at M=6 (1.19).
+  Interpretation: global attention over all chunks learns the training length. Block-NCM's few global levels plus
+  local + halo levels are close to length-agnostic. This is the strongest argument for the design: **B2 wins only
+  at the training length.**
+- Zero-shot (the released model, independent chunks) scores 13.7 at M=6. Its entropy is much higher (4.80), and
+  each chunk is a fresh fluent opening, which GPT-2 Large scores well. The same effect appeared at M=4 (14.4); it
+  isn't comparable to the trained models.
+
+**Plan search** (sample 8 plans per story, keep the one the model itself scores highest; `--n-plans 8`, M=4):
+
+| | genPPL | boundary ratio | latency, s/sample (KV-cached path, batch 8–16) |
+|---|---|---|---|
+| Ours G=3 | 22.0 → **20.5** | 1.39 → 1.36 | — → 0.079 |
+| Ours G=3 + halo 4 | 21.0 → **20.0** | 1.19 → 1.21 | 0.059 → 0.079 |
+
+Plan search gains 1–1.5 genPPL for about 1.3× latency. It mostly improves the content rather than the seams, so it
+stacks with halo.
+
+- Running on Kaggle (two T4s): G=5 + halo 4, G=6 + halo 4, G=3 + halo 8, and G=3 + halo 2.
 
 ## 2026-11-19: Milestone 4, layer-drop refiner on Kaggle (T4, fp16, one seed)
 
