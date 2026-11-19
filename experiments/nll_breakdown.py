@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from blockncm.load import load_released  # noqa: E402
+from blockncm.load import amp_dtype, load_released  # noqa: E402
 from blockncm.model import ChunkedNCM  # noqa: E402
 
 ap = argparse.ArgumentParser()
@@ -31,11 +31,15 @@ ap.add_argument("--ckpt", default="~/ncm/checkpoints/tinystories")
 ap.add_argument("--chunked", default="~/ncm/data/chunked")
 ap.add_argument("--data", default="~/ncm/data/tinystories")
 ap.add_argument("--val-every", type=int, default=100)
+ap.add_argument("--max-docs", type=int, default=0, help="as passed to prepare_chunks.py (0 = all)")
 ap.add_argument("--coarse", type=int, default=3, help="levels 1..coarse count as coarse")
 ap.add_argument("--bs", type=int, default=8)
 ap.add_argument("--n-boot", type=int, default=1000)
 ap.add_argument("--out", default="")
+ap.add_argument("--amp", default="auto", choices=["auto", "bf16", "fp16", "fp32"],
+                help="autocast dtype; auto = bf16 on GPUs with native bf16, else fp16")
 a = ap.parse_args()
+AMP = amp_dtype(a.amp)
 
 cfg, tk, net, sd = load_released(a.ckpt)
 from blockncm.fast import FastChunkedNCM  # noqa: E402  (exactly ChunkedNCM at halo 0; also scores halo runs)
@@ -52,6 +56,8 @@ off = np.load(os.path.join(data, "train_bpe_8192_offsets.npy")).astype(np.int64)
 tok = np.memmap(os.path.join(data, "train_bpe_8192.bin"), dtype=np.uint16, mode="r")
 EOS = model.eos
 eligible = np.nonzero(np.diff(off) > (a.M - 1) * C)[0]
+if a.max_docs:  # must match prepare_chunks.py --max-docs
+    eligible = eligible[: a.max_docs]
 vidx = eligible[eligible % a.val_every == 0]
 assert len(vidx) == len(val), f"rebuilt {len(vidx)} val docs, file has {len(val)}"
 
@@ -109,7 +115,7 @@ for spec in a.runs:
     with torch.no_grad():
         for s in range(0, len(val), a.bs):
             c = torch.from_numpy(val[s:s + a.bs].astype(np.int64)).cuda()
-            with torch.autocast("cuda", dtype=torch.bfloat16):
+            with torch.autocast("cuda", dtype=AMP or torch.float32, enabled=AMP is not None):
                 _, stt = m_.forward_loss(c, G, per_code=True)
             for t in range(K):
                 nll[t].append(stt["codes_nll"][t].float().cpu())

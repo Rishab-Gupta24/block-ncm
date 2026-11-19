@@ -23,7 +23,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from blockncm.load import load_released  # noqa: E402
+from blockncm.load import amp_dtype, load_released  # noqa: E402
 from blockncm.model import ChunkedNCM  # noqa: E402
 
 ap = argparse.ArgumentParser()
@@ -42,7 +42,10 @@ ap.add_argument("--fast", action="store_true", help="FastChunkedNCM generation (
 ap.add_argument("--halo", type=int, default=None, help="halo width (default: the run's training value)")
 ap.add_argument("--n-plans", type=int, default=1, help="plan search: candidates per document (needs 0<G<K)")
 ap.add_argument("--out", default="")
+ap.add_argument("--amp", default="auto", choices=["auto", "bf16", "fp16", "fp32"],
+                help="autocast dtype; auto = bf16 on GPUs with native bf16, else fp16")
 a = ap.parse_args()
+AMP = amp_dtype(a.amp)
 
 cfg, tk, net, sd = load_released(a.ckpt)
 st = torch.load(os.path.join(os.path.expanduser(a.run), "model.pt"), map_location="cpu", weights_only=False) \
@@ -75,7 +78,7 @@ for seed in seeds:
     for s in range(0, a.n, a.bs):
         B = min(a.bs, a.n - s)
         torch.cuda.synchronize(); t0 = time.time()
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.autocast("cuda", dtype=AMP or torch.float32, enabled=AMP is not None):
             codes = model.generate(B, a.M, a.G, temperature=a.temp, **gen_kw)
         torch.cuda.synchronize(); lat.append((time.time() - t0, B))
         flat = codes.reshape(B * a.M, -1)

@@ -32,3 +32,13 @@ def load_released(ckpt_dir, device="cuda"):
     sd = torch.load(os.path.join(ckpt_dir, cfg.checkpoints.generator), map_location="cpu", weights_only=False)
     net.load_state_dict(sd["model"], strict=True)
     return cfg, tk, net, sd
+
+
+def amp_dtype(name="auto"):
+    """Autocast dtype: 'bf16', 'fp16', 'fp32' (None = no autocast), or 'auto' = bf16 on GPUs with native bf16
+    (compute capability >= 8.0, e.g. RTX 30/40/50, A100, H100), else fp16 (T4, P100, V100: Kaggle/Colab)."""
+    if name == "auto":
+        if not torch.cuda.is_available():
+            return None
+        name = "bf16" if torch.cuda.get_device_capability()[0] >= 8 else "fp16"
+    return {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": None}[name]

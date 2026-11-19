@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from blockncm.load import load_released  # noqa: E402
+from blockncm.load import amp_dtype, load_released  # noqa: E402
 from blockncm.model import ChunkedNCM  # noqa: E402
 
 ap = argparse.ArgumentParser()
@@ -44,6 +44,8 @@ ap.add_argument("--corrupt-mean", type=float, default=0.0,
 ap.add_argument("--corrupt-span", type=float, default=0.5,
                 help="rate falls linearly from mean+span/2 (level 0) to mean-span/2 (level K-1)")
 ap.add_argument("--keep-ckpts", action="store_true", help="also save model_step{N}.pt at every evaluation")
+ap.add_argument("--amp", default="auto", choices=["auto", "bf16", "fp16", "fp32"],
+                help="autocast dtype; auto = bf16 on GPUs with native bf16, else fp16 with gradient scaling")
 ap.add_argument("--data-suffix", default="", help="e.g. _sent for sentence-aligned chunks (train_M4_sent.npy)")
 ap.add_argument("--fast", action="store_true", help="FastChunkedNCM: KV-cached plan (exact, faster)")
 ap.add_argument("--halo", type=int, default=0, help="halo attention width for local levels (implies --fast)")
@@ -117,6 +119,9 @@ if hasattr(model, "plan_bias"):  # Adam moves a parameter ~lr per step: the bias
     groups.append({"params": [model.plan_bias], "lr": a.plan_bias_lr, "weight_decay": 0.0})
 opt = torch.optim.AdamW(groups, lr=a.lr, betas=(0.9, 0.95), weight_decay=a.wd)
 base_lrs = [g["lr"] for g in opt.param_groups]
+AMP = amp_dtype(a.amp)
+scaler = torch.amp.GradScaler("cuda", enabled=AMP is torch.float16)
+print(f"autocast: {AMP}", flush=True)
 
 
 def lr_scale(step):
@@ -137,7 +142,7 @@ def evaluate():
     n = 0
     for s in range(0, len(val), a.bs):
         codes = torch.from_numpy(val[s:s + a.bs].astype(np.int64)).cuda()
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.autocast("cuda", dtype=AMP or torch.float32, enabled=AMP is not None):
             _, st = model.forward_loss(codes, a.G)
         w = len(codes)
         for k in tot:
@@ -160,11 +165,13 @@ for step in range(a.steps):
     opt.zero_grad(set_to_none=True)
     for _ in range(a.accum):
         codes = batch(train, np.random.randint(0, len(train), a.bs))
-        with torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.autocast("cuda", dtype=AMP or torch.float32, enabled=AMP is not None):
             loss, st = model.forward_loss(codes, a.G)
-        (loss / a.accum).backward()
+        scaler.scale(loss / a.accum).backward()
+    scaler.unscale_(opt)
     gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    opt.step()
+    scaler.step(opt)  # without fp16 the scaler is disabled: plain opt.step()
+    scaler.update()
 
     if step % 25 == 0:
         el = time.time() - t0

@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from blockncm.load import load_released  # noqa: E402
+from blockncm.load import amp_dtype, load_released  # noqa: E402
 from blockncm.refiner import PATTERNS, refiner_from_run  # noqa: E402
 
 ap = argparse.ArgumentParser()
@@ -30,7 +30,10 @@ ap.add_argument("--n", type=int, default=128)
 ap.add_argument("--bs", type=int, default=8)
 ap.add_argument("--device", default="cuda")
 ap.add_argument("--out", default="")
+ap.add_argument("--amp", default="auto", choices=["auto", "bf16", "fp16", "fp32"],
+                help="autocast dtype; auto = bf16 on GPUs with native bf16, else fp16")
 a = ap.parse_args()
+AMP = amp_dtype(a.amp)
 start = a.start_level or a.G + 1
 
 cfg, tk, net, sd = load_released(os.path.expanduser(a.ckpt), device=a.device)
@@ -45,7 +48,7 @@ def per_level(model):
     with torch.no_grad():
         for s in range(0, len(val), a.bs):
             c = torch.from_numpy(val[s:s + a.bs].astype(np.int64)).to(a.device)
-            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=a.device != "cpu"):
+            with torch.autocast("cuda", dtype=AMP or torch.float32, enabled=AMP is not None and a.device != "cpu"):
                 _, stt = model.forward_loss(c, a.G)
             pl = np.array(stt["per_level"]) * len(c)
             tot = pl if tot is None else tot + pl
