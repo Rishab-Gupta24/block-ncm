@@ -1,0 +1,140 @@
+"""Teacher-forced NLL breakdown of trained chunked models on the validation split.
+
+For each run reports, over all codes and over non-padding codes only:
+  * total NLL, coarse levels (1..G_ref) vs fine levels, every level separately
+  * NLL per chunk position (chunk 1..M)
+
+A level-t code (length l_t) is treated as padding when every token of its chunk it covers,
+[floor(j*C/l_t), ceil((j+1)*C/l_t)), is PAD. Tokens come from the
+source token windows, rebuilt with prepare_chunks.py's selection.
+
+    python experiments/nll_breakdown.py --M 4 --runs b0_M4_G0:0 ours_M4_G3:3 b2_M4_G11:11
+"""
+import argparse
+import json
+import math
+import os
+import sys
+
+import numpy as np
+import torch
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from blockncm.load import load_released  # noqa: E402
+from blockncm.model import ChunkedNCM  # noqa: E402
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--M", type=int, default=4)
+ap.add_argument("--runs", nargs="+", required=True, help="name:G pairs (dirs under --runs-dir)")
+ap.add_argument("--runs-dir", default="~/ncm/runs")
+ap.add_argument("--ckpt", default="~/ncm/checkpoints/tinystories")
+ap.add_argument("--chunked", default="~/ncm/data/chunked")
+ap.add_argument("--data", default="~/ncm/data/tinystories")
+ap.add_argument("--val-every", type=int, default=100)
+ap.add_argument("--coarse", type=int, default=3, help="levels 1..coarse count as coarse")
+ap.add_argument("--bs", type=int, default=8)
+ap.add_argument("--out", default="")
+a = ap.parse_args()
+
+cfg, tk, net, sd = load_released(a.ckpt)
+model = ChunkedNCM(net, tk, sd).cuda().eval()
+base_state = {k: v.clone() for k, v in model.state_dict().items()}
+val = np.load(os.path.join(os.path.expanduser(a.chunked), f"val_M{a.M}.npy"))
+C, K, lt, PAD = model.chunk_len, model.K, model.lt, model.pad
+print(f"val docs {len(val)}  M={a.M}", flush=True)
+
+# padding masks per level: (N, M, l_t) True = real content. The token windows are rebuilt from the
+# source data with prepare_chunks.py's exact selection (the tokenizer does not decode PAD reliably).
+data = os.path.expanduser(a.data)
+off = np.load(os.path.join(data, "train_bpe_8192_offsets.npy")).astype(np.int64)
+tok = np.memmap(os.path.join(data, "train_bpe_8192.bin"), dtype=np.uint16, mode="r")
+EOS = model.eos
+eligible = np.nonzero(np.diff(off) > (a.M - 1) * C)[0]
+vidx = eligible[eligible % a.val_every == 0]
+assert len(vidx) == len(val), f"rebuilt {len(vidx)} val docs, file has {len(val)}"
+
+
+def window(i):
+    ids = tok[off[i]:off[i + 1]].tolist()
+    if len(ids) < a.M * C and (not ids or ids[-1] != EOS):
+        ids = ids + [EOS]
+    ids = ids[: a.M * C]
+    return ids + [PAD] * (a.M * C - len(ids))
+
+
+toks = torch.tensor([window(i) for i in vidx]).view(len(vidx), a.M, C)
+with torch.no_grad():  # sanity check: re-encoding the first docs reproduces the stored codes
+    chk = model.vqvae.encode(toks[:4].reshape(-1, C).cuda()).view(4, a.M, -1).cpu().numpy()
+    print("stored codes match re-encoded windows:", float((chk == val[:4]).mean()))
+real_tok = toks != PAD
+real = []
+for l in lt:
+    m = torch.zeros(len(val), a.M, l, dtype=torch.bool)
+    for j in range(l):
+        lo, hi = math.floor(j * C / l), math.ceil((j + 1) * C / l)
+        m[:, :, j] = real_tok[:, :, lo:hi].any(-1)
+    real.append(m)
+print("fraction of non-padding codes per chunk:",
+      [round(float(torch.cat([r[:, k].flatten() for r in real]).float().mean()), 3) for k in range(a.M)])
+
+results = {}
+for spec in a.runs:
+    name, G = spec.rsplit(":", 1)
+    G = int(G)
+    st = torch.load(os.path.join(os.path.expanduser(a.runs_dir), name, "model.pt"), map_location="cpu",
+                    weights_only=False)
+    model.load_state_dict(st["model"], strict=True)
+    nll = [[] for _ in range(K)]
+    with torch.no_grad():
+        for s in range(0, len(val), a.bs):
+            c = torch.from_numpy(val[s:s + a.bs].astype(np.int64)).cuda()
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                _, stt = model.forward_loss(c, G, per_code=True)
+            for t in range(K):
+                nll[t].append(stt["codes_nll"][t].float().cpu())
+    nll = [torch.cat(x) for x in nll]  # each (N, M, l_t)
+
+    def agg(levels, use_mask, chunk=None):
+        num = den = 0.0
+        for t in levels:
+            x, m = nll[t], (real[t] if use_mask else torch.ones_like(real[t]))
+            if chunk is not None:
+                x, m = x[:, chunk], m[:, chunk]
+            num += float((x * m).sum()); den += float(m.sum())
+        return num / den
+
+    allv, coarse, fine = range(K), range(a.coarse), range(a.coarse, K)
+    r = {"G": G, "step": st.get("step")}
+    for tag, mk in (("all", False), ("nonpad", True)):
+        r[tag] = {
+            "total": agg(allv, mk), "coarse": agg(coarse, mk), "fine": agg(fine, mk),
+            "per_level": [agg([t], mk) for t in allv],
+            "per_chunk": [agg(allv, mk, k) for k in range(a.M)],
+        }
+    results[name] = r
+    print(name, json.dumps({k: round(v, 4) for k, v in r["nonpad"].items() if not isinstance(v, list)}), flush=True)
+
+model.load_state_dict(base_state)
+names = [s.rsplit(":", 1)[0] for s in a.runs]
+
+
+def table(tag):
+    rows = [f"| | {' | '.join(names)} |", "|---|" + "---|" * len(names)]
+    def row(label, f):
+        rows.append(f"| {label} | " + " | ".join(f"{f(results[n][tag]):.4f}" for n in names) + " |")
+    row("total", lambda d: d["total"])
+    row(f"coarse (levels 1-{a.coarse})", lambda d: d["coarse"])
+    row(f"fine (levels {a.coarse + 1}-{K})", lambda d: d["fine"])
+    for t in range(K):
+        row(f"level {t + 1} (l={lt[t]})", lambda d, t=t: d["per_level"][t])
+    for k in range(a.M):
+        row(f"chunk {k + 1}", lambda d, k=k: d["per_chunk"][k])
+    return "\n".join(rows)
+
+
+for tag in ("all", "nonpad"):
+    print(f"\n### NLL ({'all codes' if tag == 'all' else 'non-padding codes only'})\n")
+    print(table(tag))
+out = a.out or os.path.join(os.path.expanduser(a.runs_dir), f"nll_breakdown_M{a.M}.json")
+json.dump(results, open(out, "w"), indent=2)
+print("->", out)

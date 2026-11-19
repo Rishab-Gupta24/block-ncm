@@ -37,6 +37,7 @@ ap.add_argument("--bs", type=int, default=64)
 ap.add_argument("--temp", type=float, default=1.0)
 ap.add_argument("--window", type=int, default=32)
 ap.add_argument("--ref-model", default="gpt2-large")
+ap.add_argument("--score-bs", type=int, default=4, help="GPT-2 Large scoring batch (8 GB GPU: 4)")
 ap.add_argument("--out", default="")
 a = ap.parse_args()
 
@@ -98,6 +99,11 @@ for _, ch in samples:
         if mid + W <= end:
             iwin.append(dec(clean(flat[mid - W:mid + W])))
 
+out = a.out or os.path.join(os.path.expanduser(a.run) if a.run else os.path.expanduser("~/ncm/runs/zeroshot"),
+                            f"eval_M{a.M}_G{a.G}_t{a.temp}.json")
+os.makedirs(os.path.dirname(out), exist_ok=True)
+json.dump({"seeds": seeds, "samples": samples, "latency": lat}, open(out.replace(".json", "_samples.json"), "w"))
+
 NCM_ROOT = os.path.expanduser(os.environ.get("NCM_ROOT", "~/ncm"))
 from evaluation.gen_ppl import generation_perplexity  # noqa: E402
 from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
@@ -110,7 +116,7 @@ def gppl(ts):
     ts = [t for t in ts if t.strip()]
     if not ts:
         return float("nan")
-    return float(generation_perplexity(rlm, rtok, [""] * len(ts), ts, batch_size=16).mean_ppl)
+    return float(generation_perplexity(rlm, rtok, [""] * len(ts), ts, batch_size=a.score_bs).mean_ppl)
 
 
 def entropy(ids):
@@ -138,8 +144,5 @@ res = {
 }
 res["boundary_ratio"] = res["boundary_genppl"] / res["inner_genppl"]
 print(json.dumps({k: v for k, v in res.items() if k != "examples"}, indent=2))
-out = a.out or os.path.join(os.path.expanduser(a.run) if a.run else os.path.expanduser("~/ncm/runs/zeroshot"),
-                            f"eval_M{a.M}_G{a.G}_t{a.temp}.json")
-os.makedirs(os.path.dirname(out), exist_ok=True)
 json.dump(res, open(out, "w"), indent=2)
 print("->", out)

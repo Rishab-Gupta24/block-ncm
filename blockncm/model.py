@@ -141,7 +141,7 @@ class ChunkedNCM(nn.Module):
         return self.net.transformer.ln_f(h)
 
     # ------------------------------------------------------------------ training
-    def forward_loss(self, codes, G, dense=False):
+    def forward_loss(self, codes, G, dense=False, per_code=False):
         """codes: (B, M, 1 + sum(lt)) long. Returns (mean NLL over all target codes, stats dict).
 
         Default path: one short sequence per level, built with the *generation* layouts
@@ -168,7 +168,7 @@ class ChunkedNCM(nn.Module):
             emb.append(self._embed(X[:, :, o:o + l].reshape(B, M * l, D).to(pre.dtype), t, cid))
         plan = emb[G - 1] if 0 < G < self.K else None
 
-        nll_sum, n_tok, per_level = 0.0, 0, []
+        nll_sum, n_tok, per_level, codes_nll = 0.0, 0, [], []
         g_sum = g_n = l_sum = l_n = 0.0
         for t, l in enumerate(self.lt):
             mask, rope = self._gen_layout(M, G, t, dev)
@@ -183,7 +183,12 @@ class ChunkedNCM(nn.Module):
                 hs = self._run(torch.cat(seq, 1), mask, rope)[:, -l:]  # (B*M, l)
                 tgt = Y[:, :, self.offsets[t]:self.offsets[t] + l].reshape(B * M, l)
             logits = self.net.lm_heads[t](hs).float()
-            nll = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), tgt.reshape(-1), reduction="sum")
+            if per_code:  # (B, M, l) NLL per code, for diagnostics
+                pc = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), tgt.reshape(-1), reduction="none")
+                codes_nll.append(pc.view(B, M, l))
+                nll = pc.sum()
+            else:
+                nll = F.cross_entropy(logits.reshape(-1, logits.shape[-1]), tgt.reshape(-1), reduction="sum")
             nll_sum = nll_sum + nll
             n = B * M * l
             n_tok += n
@@ -199,6 +204,8 @@ class ChunkedNCM(nn.Module):
             "nll_local": l_sum / l_n if l_n else float("nan"),
             "per_level": per_level,
         }
+        if per_code:
+            stats["codes_nll"] = codes_nll
         return nll_sum / n_tok, stats
 
     def _forward_loss_dense(self, codes, G):
