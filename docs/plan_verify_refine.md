@@ -67,8 +67,10 @@ released model, which has never seen a plan, so KL to it would penalise plan use
 Checks (`experiments/test_refiner.py`): 12/12 layers equal FastChunkedNCM exactly; levels below the start level
 unchanged; only the refiner copy gets gradients; plan K/V taken from the kept layer ids.
 
-Depth probe (`experiments/depth_probe.py`, no training): untrained layer drop costs ~4 nats on the local levels
-(one-document CPU check: 6/12 uniform [0,2,4,6,8,11] best; 3/12 prefix best). Distillation has to recover this.
+Depth probe (`experiments/depth_probe.py`, no training) on Ours G=3 (corruption recipe), 256 val docs, local
+levels 4–11 code-weighted NLL: full depth 1.708; 6/12 symmetric [0,1,2,9,10,11] 5.591 (+3.88), uniform
+[0,2,4,6,8,11] 5.604 (+3.90), prefix 6.426 (+4.72); 3/12 prefix 7.260 (+5.55). Untrained layer drop is far
+off; distillation has to recover ~3.9 nats. The refiner runs on Kaggle (free T4, `kaggle/run_refiner.sh`).
 The cost model predicts ~1.85× faster generation at 6/12 layers from level 4; the queued run measures it.
 
 ## 3. Sentence-aligned chunks (paper 1 ablation)
