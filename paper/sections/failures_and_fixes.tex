@@ -106,7 +106,8 @@ training step is 2.0$\times$ faster on a T4 (1.21\,s vs 2.43\,s).
 
 \paragraph{O3. Generation quality is still below the released model.}
 Samples keep a coherent plot across all four chunks, but grammar slips are frequent. That is a consequence of F1
-and of model size. Fixes under test: lower sampling temperature, and plan-only adapters (next).
+and of model size. Plan-only adapters did not help (below). Under test: lower sampling temperature, and recipe
+changes (unfiltered openings, per-level loss weighting, a KL anchor to the released model).
 \textbf{Open.}
 
 \subsection{Ours with more global levels ($G{=}5$, $G{=}6$)}
@@ -138,7 +139,10 @@ global passes, plus a learned bias on attention to the plan.
         longer ``plan-only''. \emph{Fix:} adapters skip the prefix, and chunk embeddings apply to global levels
         only. Seven unit checks verify this.
 \end{itemize}
-\emph{Outcome:} training is \textbf{running}.
+\emph{Outcome:} \textbf{failed}. The adapters have the worst NLL of all fine-tuned models (1.834 vs 1.744 for Ours;
+chunk 4: 2.22 vs 1.79), because the frozen local levels never learn chunks 2--4. They also generate worst
+(genPPL 28.5 vs 22.0 at $M{=}4$), so freezing did not preserve the released model's fluency. Full fine-tuning stays
+the method.
 
 \subsection{Layer-drop refiner (negative result, moved to future work)}
 Goal: cut serving cost by running local levels with 6 of the 12 layers, with each kept layer reading the plan
@@ -171,7 +175,7 @@ Ours $G{=}3$ & seams 1.39 & halo attention, $h{=}4$ & 1.19, fixed \\
 Ours $G{=}3$ & plan recomputed per level & KV-cached plan (exact) & 2.0$\times$, fixed \\
 Ours $G{=}5,6$ & degrade at $M{=}6$ (23.8, 30.7) & halo; $G{=}5$ & $G{=}5$: 20.0, fixed; $G{=}6$: 23.6 \\
 B2 & collapse at $M{=}6$ (33.5) & none (baseline) & finding \\
-plan-only adapters & mask crash; bias stuck; leak & key-dim bias; own lr; skip prefix & \textbf{running} \\
+plan-only adapters & mask crash; bias stuck; leak; then NLL 1.834, genPPL 28.5 & key-dim bias; own lr; skip prefix & \textbf{failed} \\
 layer-drop refiner & +0.3--0.5 nats, genPPL $\times$1.5--2 & distillation (insufficient) & \textbf{failed} \\
 \bottomrule
 \end{tabular}

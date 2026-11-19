@@ -128,8 +128,19 @@ NLL on the same 1,228 val docs (non-padding):
 | chunk 4 | 2.7750 | 1.8040 | **1.7933** | 2.2235 | 1.8718 |
 
 The adapters are the worst fine-tuned model on NLL, worst of all on chunk 4. Their local levels are the released
-model's, which never saw chunks 2–4. The plan bias barely opened (−6.0 → −5.19). Generation (whether freezing kept
-the released fluency) is pending: the first evaluation ran out of memory and is queued again at a smaller batch.
+model's, which never saw chunks 2–4. The plan bias barely opened (−6.0 → −5.19). Generation (GPT-2 Large, 2 seeds × 256):
+
+| | B0 | Ours G=3 | **plan-only adapters** |
+|---|---|---|---|
+| genPPL, M=4 | 24.1 | 22.0 | 28.5 |
+| boundary / inner ratio, M=4 | 1.52 | 1.39 | 1.24 |
+| genPPL, M=6 | 23.7 | 21.8 | 24.0 |
+| entropy, M=4 / M=6 | 4.50 / — | 4.39 / — | 4.49 / 4.59 |
+
+**Negative result: freezing the generator did not keep the released model's fluency.** The adapters generate worst
+of all at M=4 (28.5). Their seams are fairly good (1.24), plausibly because the frozen local levels still write each
+chunk as a fluent opening. Their high entropy and the lower M=6 score (24.0, longer samples give GPT-2 Large more
+context) fit the same picture: locally fluent text that does not follow one story. Full fine-tuning stays the method.
 
 ## 2026-11-19: Milestone 5b, halo widths and halo + larger plans (Kaggle, 2× T4, fp16, one seed)
 
