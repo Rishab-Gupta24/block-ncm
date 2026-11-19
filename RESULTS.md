@@ -22,6 +22,34 @@ The README gives no TinyStories number to compare against; check the paper's tab
 
 See `docs/long_form_design.md` §6. Chunked training is feasible for M ∈ {2, 3, 4}; M = 6 is used for evaluation only.
 
+## 2026-11-19: Serving-cost roofline model (`paper/scripts/serving_cost.py`)
+
+Analytic, not measured. Assumptions: 7B parameters for both AR and NCM (equal quality at equal size is
+assumed, not shown), H100 specs (989 TFLOP/s, 3.35 TB/s, 80 GB), 40% FLOP and 80% bandwidth utilisation,
+$2.50/GPU-hour, 2,048-token outputs (M=16), Block-NCM G=3 with a KV-cached plan. Counts dense and attention
+FLOPs, weight loads and AR KV-cache reads; ignores tokenizer decode, launch overheads and low utilisation on
+small passes.
+
+| | AR (GQA-8) | B1 (chunks in sequence) | B2 (fully global) | **Block-NCM** |
+|---|---|---|---|---|
+| batch-1 latency | 10.8 s | 0.92 s | 0.38 s | **0.37 s** |
+| batch-1 cost, $ per 1M tokens | 3.65 | 0.31 | 0.13 | **0.125** |
+| batch-32 cost | 0.131 | 0.123 | 0.129 | 0.125 |
+| batch-256 cost | **0.033** | 0.123 | 0.129 | 0.125 |
+
+- **Batch 1:** Block-NCM is about 29× faster and cheaper than AR, and 2.5× faster than B1 for the same FLOPs.
+  B1's small per-chunk passes are limited by weight loading.
+- **Large batch:** AR is cheaper from about batch 34 (predicted B*/ρ = 148/5 = 30). At batch 256, Block-NCM
+  costs about 3.8× more per token: NCM runs ρ = 5.0 positions per output token.
+- **Latency also converges:** NCM is compute-bound from batch 1, so its batch latency grows linearly. At
+  batch 32, Block-NCM (11.8 s) is no faster than AR (12.3 s).
+- **Full multi-head attention (no GQA):** AR's KV cache (1.07 GB per sequence) caps it below batch 64 on
+  80 GB, and Block-NCM is cheaper at every feasible batch (about 2× at batch 32).
+- **Block-NCM vs B2 is small at this model size:** 3% faster at 2k tokens, 13% at 8k. Attention is a small
+  share of FLOPs at d=4096. The local-attention saving only matters at much longer outputs.
+- **The economic case is low-batch, latency-bound generation** (interactive, on-device, single-user), not
+  high-throughput serving.
+
 ## 2026-11-19: Implementation checks (`experiments/test_equivalence.py`)
 
 - `ChunkedNCM` with M=1 reproduces the released teacher-forced loss exactly for G=0 and G=K
