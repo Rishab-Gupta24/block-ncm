@@ -273,6 +273,24 @@ $0.038 per 1M tokens at batch 256 against AR's $0.033, and moves the crossover f
 Super-block streaming removes most of the no-streaming drawback: first output in 0.1 s, only 9% slower in
 total. AR with speculative decoding is still about 11× slower than Block-NCM.
 
+### Recipe gap (16.5 → 20.5): second round of hypotheses, gates queued
+
+Checked against the code and the NCM paper (App. F.2.3, F.3, Table 6) before running anything:
+
+| hypothesis | check | status |
+|---|---|---|
+| Loss averages over codes, not levels (level 11 gets 16× level 1's weight) | True: `forward_loss` is the code average (α=0 in the paper's Eq. 10). But the paper's own α ablation gives genPPL 18.9–19.0 for every α ≤ 1 | Unlikely cause; gate `gate_a1` (α=1) |
+| The gate trained on openings of long stories only | True: `train_M1.npy` was cut from the filtered M=4 set (stories > 384 tokens, 6% of TinyStories) | Gate `gate_unf`: 60k unfiltered openings |
+| Full-weight drift away from the released model | Plausible; untested | Gate `gate_kl1`: KL(frozen released ‖ model) on local levels, weight 1 |
+| The layer-drop refiner failed because it cut levels 4–6 | Already tested: levels 7–11 only, symmetric layers [0,1,2,9,10,11], still +0.30 nats, genPPL 32.0 | Refuted (Milestone 4) |
+
+Also noted: the released recipe uses weight decay 0.1 and an lr floor of 3e-5 over 50k updates at batch 2,048; we
+fine-tune with weight decay 0.01 and peak lr 3e-5.
+
+Gates (M=1, 300 steps, batch 32, lr 3e-5, corruption 0.5, same as the 20.7 gate): `gate_base` (repeat, noise
+control), `gate_unf`, `gate_a1`, `gate_kl1`, `gate_all` (unfiltered + α=1 + KL 1). Code: `--level-alpha`,
+`--kl-anchor` in `experiments/train.py`; checks in `experiments/test_anchor.py` (7/7 pass). **Results pending.**
+
 ### Checked and rejected
 
 - **"The 20.5 plateau comes from the length filter (no EOS in openings of long stories)."** Refuted: only 5.0%

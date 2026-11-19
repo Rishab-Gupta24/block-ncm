@@ -145,6 +145,13 @@ class FastChunkedNCM(ChunkedNCM):
             emb.append(self._embed(X[:, :, o:o + l].reshape(B, M * l, D).to(pre.dtype), t, cid))
 
         past = self._prefix_past(pre, dev) if G == 0 else None
+        # level weighting (NCM paper Eq. 10): w_k = l_k^-alpha / sum_j l_j^(1-alpha), per code; alpha=0 = code average
+        alpha = getattr(self, "level_alpha", 0.0)
+        z = sum(lj ** (1 - alpha) for lj in self.lt)
+        w = [lj ** -alpha / z / (B * M) for lj in self.lt]
+        ref = self.__dict__.get("ref")
+        anchored = ref is not None and self.training and getattr(self, "kl_weight", 0.0) > 0
+        ref_past, kl_sum, kl_n, obj = None, 0.0, 0, 0.0
         nll_sum, n_tok, per_level, codes_nll = 0.0, 0, [], []
         g_sum = g_n = l_sum = l_n = 0.0
         for t, l in enumerate(self.lt):
@@ -164,6 +171,19 @@ class FastChunkedNCM(ChunkedNCM):
             if per_code:
                 codes_nll.append(pc.view(B, M, l))
             nll = pc.sum()
+            if anchored and t >= G:
+                # forward KL(released || model) on this local level, the released model seeing each chunk alone
+                with torch.no_grad():
+                    if ref_past is None:
+                        ref_pre = ref._prefix_emb(B, dev)
+                        ref_past = ref._prefix_past(ref_pre, dev)
+                    cid = torch.arange(M, device=dev).repeat_interleave(l)
+                    r_emb = ref._embed(X[:, :, o:o + l].reshape(B, M * l, D).to(ref_pre.dtype), t, cid)
+                    p_ref = F.softmax(ref.net.lm_heads[t](ref._local_pass(r_emb, t, M, ref_past, dev)).float(), -1)
+                kl = (p_ref * (torch.log(p_ref.clamp_min(1e-30)) - F.log_softmax(logits, -1))).sum()
+                kl_sum += kl.item(); kl_n += B * M * l
+                obj = obj + w[t] * self.kl_weight * kl
+            obj = obj + w[t] * nll
             nll_sum = nll_sum + nll
             n = B * M * l
             n_tok += n
@@ -177,6 +197,10 @@ class FastChunkedNCM(ChunkedNCM):
                  "nll_local": l_sum / l_n if l_n else float("nan"), "per_level": per_level}
         if per_code:
             stats["codes_nll"] = codes_nll
+        if anchored:
+            stats["kl"] = kl_sum / kl_n
+        if self.training and (alpha or anchored):
+            return obj, stats          # weighted / anchored training objective; stats stay the plain code average
         return nll_sum / n_tok, stats
 
     # ------------------------------------------------------------------ generation

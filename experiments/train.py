@@ -61,6 +61,11 @@ ap.add_argument("--distill", type=float, default=1.0, help="weight of KL(full-de
 ap.add_argument("--init-from", default="", help="run dir whose model.pt initialises the model (refiner: the teacher)")
 ap.add_argument("--min-len", type=int, default=0,
                 help="keep only documents with at least this many tokens (needs *_len.npy from prepare_chunks)")
+ap.add_argument("--level-alpha", type=float, default=0.0,
+                help="per-level loss weighting, NCM paper Eq. 10 (0 = code average, 1 = equal per level); needs --fast")
+ap.add_argument("--kl-anchor", type=float, default=0.0,
+                help="weight of KL(frozen released model || model) on local levels, released model sees each chunk "
+                     "alone; needs --fast")
 a = ap.parse_args()
 
 torch.manual_seed(a.seed)
@@ -94,6 +99,17 @@ elif a.fast or a.halo:
 else:
     model = ChunkedNCM(net, tk, sd).cuda()
 model.grad_ckpt = a.grad_ckpt
+if a.level_alpha or a.kl_anchor:
+    from blockncm.fast import FastChunkedNCM
+    assert type(model) is FastChunkedNCM, "--level-alpha / --kl-anchor need --fast (plain FastChunkedNCM)"
+    model.level_alpha, model.kl_weight = a.level_alpha, a.kl_anchor
+    if a.kl_anchor:
+        _, _, ref_net, ref_sd = load_released(a.ckpt)
+        ref = FastChunkedNCM(ref_net, tk, ref_sd).cuda().eval()
+        for p in ref.parameters():
+            p.requires_grad_(False)
+        model.__dict__["ref"] = ref  # not a submodule: stays in eval mode and out of state_dict / optimizer
+    print(f"level alpha {a.level_alpha}, KL anchor {a.kl_anchor}", flush=True)
 if a.corrupt_mean > 0:
     model.corrupt = ChunkedNCM.linear_corruption(model.K, a.corrupt_mean, a.corrupt_span)
     print("conditioning corruption per level:", [round(p, 3) for p in model.corrupt], flush=True)
