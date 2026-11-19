@@ -22,6 +22,48 @@ The README gives no TinyStories number to compare against; check the paper's tab
 
 See `docs/long_form_design.md` §6. Chunked training is feasible for M ∈ {2, 3, 4}; M = 6 is used for evaluation only.
 
+## 2026-11-19: Milestone 3b, M=4 runs on the corrected recipe (conditioning corruption 0.5, lr 3e-5, one seed)
+
+Same setup as Milestone 3 (1,500 steps × 8 documents, 125,723 train docs), now with corruption. These are the
+first valid generation numbers.
+
+**NLL** (`nll_breakdown.py`, all 1,228 val docs, non-padding codes; paired per-document bootstrap, 1,000 resamples):
+
+| | B0 (G=0) | **Ours (G=3)** | B2 (G=11) |
+|---|---|---|---|
+| total | 1.7486 | **1.7438** | 1.7780 |
+| coarse, levels 1–3 | 5.2730 | 5.2823 | **5.1647** |
+| fine, levels 4–11 | 1.4616 | **1.4556** | 1.5022 |
+| levels 9 / 10 | 1.821 / 1.979 | **1.817 / 1.968** | 1.941 / 2.043 |
+| chunk 4 | 1.804 | **1.793** | 1.872 |
+| Ours − run, 95% CI | **−0.0049 [−0.0056, −0.0042]**, Ours better on 66% of docs | — | **−0.0342 [−0.0354, −0.0330]**, 96% of docs |
+
+**Generation** (`sample_eval.py`, 2 seeds × 256 samples, M=4):
+
+| | B0 | **Ours** | B2 | Ours: share of B0→B2 gap |
+|---|---|---|---|---|
+| genPPL | 24.1 ± 0.2 | **22.0 ± 0.3** | 19.0 ± 0.1 | 42% |
+| boundary / inner ratio | 1.52 | **1.39** | 1.17 | 38% |
+| inner-window genPPL | 35.3 | 35.8 | 35.4 | |
+| entropy | 4.50 | 4.39 | 4.36 | |
+| latency, s/sample (batch 64, RTX 5050) | 0.045 | 0.090* | 0.051 | |
+
+\* ChunkedNCM path, which recomputes the plan for every local level; the KV-cached path halves training time and is
+measured separately.
+
+References: B0 single-chunk (M=1) genPPL **21.6** (released 16.5: the recipe's cost, as in the gate runs); real
+TinyStories at 768 tokens (M=6, 145 docs): genPPL 5.3, boundary ratio 1.015.
+
+What this shows:
+- **Ours has the best NLL,** significantly better than both baselines (CIs exclude 0). With corruption on, fully global
+  attention (B2) has the *worst* NLL: better on the coarse levels, clearly worse on levels 6–11 and on chunk 4.
+- **Generation ranks B2 > Ours > B0,** the opposite of NLL for B2. Ours closes about 40% of the B0→B2 gap on genPPL and
+  on seams. Teacher-forced NLL (clean inputs) and free generation (the model's own errors) measure different things.
+  Within a level, B2's attention across all chunks seems to help most where sampling errors and seams arise.
+- So **"Ours ≈ B2" holds on NLL but not on generation;** closing the seam gap is the open problem. That is what the
+  queued halo and G=5/6 runs target.
+- M=6 evaluations ran out of memory in sampling at batch 64; queued again at batch 16.
+
 ## 2026-11-19: Serving-cost roofline model (`paper/scripts/serving_cost.py`)
 
 Analytic, not measured. Assumptions: 7B parameters for both AR and NCM (equal quality at equal size is
