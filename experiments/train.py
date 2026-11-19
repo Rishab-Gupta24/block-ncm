@@ -43,6 +43,7 @@ ap.add_argument("--corrupt-mean", type=float, default=0.0,
                 help="conditioning corruption, mean replacement rate over levels (NCM paper selected 0.5)")
 ap.add_argument("--corrupt-span", type=float, default=0.5,
                 help="rate falls linearly from mean+span/2 (level 0) to mean-span/2 (level K-1)")
+ap.add_argument("--keep-ckpts", action="store_true", help="also save model_step{N}.pt at every evaluation")
 ap.add_argument("--min-len", type=int, default=0,
                 help="keep only documents with at least this many tokens (needs *_len.npy from prepare_chunks)")
 a = ap.parse_args()
@@ -141,7 +142,10 @@ for step in range(a.steps):
         ev = evaluate()
         print(f"step {step + 1} val {ev}", flush=True)
         log.write(json.dumps({"step": step + 1, "val": ev, "time": time.time() - t0}) + "\n"); log.flush()
-        torch.save({"model": model.state_dict(), "args": vars(a), "step": step + 1}, os.path.join(run_dir, "model.pt"))
+        ck = {"model": model.state_dict(), "args": vars(a), "step": step + 1}
+        torch.save(ck, os.path.join(run_dir, "model.pt"))
+        if a.keep_ckpts and not last:
+            torch.save(ck, os.path.join(run_dir, f"model_step{step + 1}.pt"))
     if last:
         break
 print(f"done in {(time.time() - t0) / 60:.1f} min -> {run_dir}")

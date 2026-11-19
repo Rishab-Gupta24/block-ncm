@@ -197,9 +197,22 @@ It targets exactly the deficit measured here.
 
 None passes the gate. More corruption is monotonically better (0 → 41.0, 0.25 → 24.4, 0.5 → 22.2), the schedule
 shape barely matters (flat 21.8 vs linear 22.2), and a lower learning rate helps slightly (20.7). All corrupted
-runs land at 20.7–22.2 with entropy 3.92, even when NLL matches the released calibration. Next: a
-learning-rate-≈0 control (does the train → save → load → generate path itself cost quality?), effective batch 128,
-and lr 1e-5 with corruption.
+runs land at 20.7–22.2 with entropy 3.92, even when NLL matches the released calibration.
+
+| control and further variants | openings NLL, step end | genPPL | entropy |
+|---|---|---|---|
+| **control: lr 1e-12, 40 steps (train → save → load → generate)** | 1.548 | **16.6** | 3.98 |
+| lr 1e-5, corruption 0.5, 300 steps | 1.532 | 20.8 | 3.91 |
+| lr 3e-5, corruption 0.5, effective batch 128 (accum 4), 150 steps | 1.531 | 20.3 | 3.91 |
+
+- The pipeline costs nothing (16.6 vs 16.5), so the gap comes from the weight updates.
+- **The fine-tuned models plateau at about 20.5.** Learning rates from 1e-5 to 3e-5 give the same result, and a
+  4× larger batch gains only 0.4. So neither step size nor gradient noise explains it. Most likely the model
+  adapts to *our* corruption distribution, which differs in some detail from the unpublished original
+  (entropy drops 3.98 → 3.91 in every corrupted run).
+- **Decision:** proceed with lr 3e-5 and corruption 0.5 for the M=4 runs. The recipe costs about 4 genPPL on
+  single chunks for every variant; it is measured per run and reported, so comparisons between variants stay
+  fair. Matching the released recipe exactly (batch 2,048, 50k updates) is out of reach on 8 GB.
 
 - **The damage is in the recipe, not the data:** clean training on the released model's own kind of data
   (openings) breaks generation, and a 10× lower learning rate only slows it.
