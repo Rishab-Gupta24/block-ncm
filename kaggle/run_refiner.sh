@@ -16,6 +16,9 @@
 set -u
 W=/kaggle/working
 REPO=$W/block-ncm
+# The notebook cell always calls this script; kaggle/JOB (if present) picks another job script in kaggle/.
+JOB=$(cat $REPO/kaggle/JOB 2>/dev/null | tr -d '[:space:]')
+if [ -n "$JOB" ] && [ "$JOB" != refiner ]; then exec bash $REPO/kaggle/run_$JOB.sh; fi
 OUT=$W/results
 MODE=${MODE:-$(cat $REPO/kaggle/MODE 2>/dev/null | tr -d '[:space:]')}
 MODE=${MODE:-full}
