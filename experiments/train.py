@@ -39,6 +39,8 @@ ap.add_argument("--val-docs", type=int, default=512)
 ap.add_argument("--grad-ckpt", action="store_true")
 ap.add_argument("--seed", type=int, default=0)
 ap.add_argument("--time-limit", type=float, default=0, help="stop after this many minutes (0 = none)")
+ap.add_argument("--min-len", type=int, default=0,
+                help="keep only documents with at least this many tokens (needs *_len.npy from prepare_chunks)")
 a = ap.parse_args()
 
 torch.manual_seed(a.seed)
@@ -54,7 +56,14 @@ assert 0 <= a.G <= model.K, f"G must be in [0, {model.K}]"
 
 chunked = os.path.expanduser(a.chunked)
 train = np.load(os.path.join(chunked, f"train_M{a.M}.npy"), mmap_mode="r")
-val = np.load(os.path.join(chunked, f"val_M{a.M}.npy"))[: a.val_docs]
+val = np.load(os.path.join(chunked, f"val_M{a.M}.npy"))
+if a.min_len:
+    tl = np.load(os.path.join(chunked, f"train_M{a.M}_len.npy"))
+    vl = np.load(os.path.join(chunked, f"val_M{a.M}_len.npy"))
+    assert len(tl) == len(train) and len(vl) == len(val), "length files do not match the code arrays"
+    train = train[np.nonzero(tl >= a.min_len)[0]]  # fancy indexing loads the subset into RAM
+    val = val[vl >= a.min_len]
+val = val[: a.val_docs]
 print(f"train docs {len(train):,}  val docs {len(val):,}  M={a.M} G={a.G} K={model.K}", flush=True)
 
 chunk_params = list(model.chunk_emb.parameters())
