@@ -59,6 +59,33 @@ What this shows:
   jump. Measured separately, cutting *depth* on these levels failed (Milestone 4). Level-skipping at full depth
   remains open and is the cheaper idea to test next.
 
+## 2026-11-19: Sentence-aligned chunks and plan-only adapters (local, one seed)
+
+**Sentence-aligned chunks (negative result).** Chunks end at the last sentence end before 128 tokens, and the rest
+of the chunk is padding (`prepare_chunks.py --align sentence`). Same recipe as Milestone 3b. The idea was that seams
+at sentence ends would be easier to join.
+
+| | B0, fixed | B0, sentence-aligned | Ours G=3, fixed | Ours G=3, sentence-aligned |
+|---|---|---|---|---|
+| genPPL, M=4 | 24.1 | 27.0 | 22.0 | 24.3 |
+| boundary / inner ratio | 1.52 | 1.76 | 1.39 | 1.54 |
+
+Both get worse, and the seams do not get easier. A likely reason (not tested): padded chunks hold fewer real tokens,
+and the model must also learn where each chunk's padding starts. Fixed-length chunks plus halo stay the design.
+
+**Plan-only adapters (frozen generator, LoRA rank on the global passes + plan bias; 2.4M trainable parameters).**
+NLL on the same 1,228 val docs (non-padding):
+
+| | released | B0 | Ours G=3 | **plan-only adapters** | B2 |
+|---|---|---|---|---|---|
+| total | 2.0964 | 1.7486 | **1.7438** | 1.8343 | 1.7780 |
+| fine, levels 4–11 | 1.7468 | 1.4616 | 1.4556 | 1.5508 | 1.5022 |
+| chunk 4 | 2.7750 | 1.8040 | **1.7933** | 2.2235 | 1.8718 |
+
+The adapters are the worst fine-tuned model on NLL, worst of all on chunk 4. Their local levels are the released
+model's, which never saw chunks 2–4. The plan bias barely opened (−6.0 → −5.19). Generation (whether freezing kept
+the released fluency) is pending: the first evaluation ran out of memory and is queued again at a smaller batch.
+
 ## 2026-11-19: Milestone 5b, halo widths and halo + larger plans (Kaggle, 2× T4, fp16, one seed)
 
 Same recipe as Milestone 5 (corruption 0.5, lr 3e-5, 1,500 steps, `--fast`), trained on Kaggle (`kaggle/run_halo.sh`,
