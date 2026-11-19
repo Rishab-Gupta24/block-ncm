@@ -448,6 +448,8 @@ control), `gate_unf`, `gate_a1`, `gate_kl1`, `gate_all` (unfiltered + α=1 + KL 
 | **`gate_kl1` (KL anchor to the released model, weight 1)** | 1.537 | **19.5** | **3.94** |
 | **`gate_unf` (unfiltered openings, 60k stories of any length)** | 1.473 * | **17.0** | **3.98** |
 | **`gate_all` (unfiltered + α=1 + KL anchor 1)** | 1.484 * | **16.1** | **3.97** |
+| `gate_kl3` (KL anchor 3, long-story openings) | 1.546 | 18.0 | 3.97 |
+| `gate_unf_kl3` (unfiltered + KL anchor 3) | 1.496 * | 16.3 | 3.98 |
 
 \* NLL on the unfiltered validation openings, not comparable with the rows above.
 
@@ -464,7 +466,9 @@ control), `gate_unf`, `gate_a1`, `gate_kl1`, `gate_all` (unfiltered + α=1 + KL 
   this style offset; real long-story text at M=4 scores 6.1. The KL anchor is the part that transfers; it is being
   tested at M=4 next (anchor 1 on all chunks, and with chunks 2–4 at 0.3×, since the reference model only knows
   openings).
-- Queued: weight 3 (`gate_kl3`, `gate_unf_kl3`).
+- **Weight 3 helps further on long-story openings: 19.5 → 18.0** (entropy 3.97), at a small NLL cost
+  (1.546 vs 1.533). That is about the released model's level after the style adjustment (16.5 × 1.10 ≈ 18.1).
+  On unfiltered openings it gives 16.3, the same as weight 1 + α=1 (16.1) within noise.
 
 **The long-story subset is a different style of story.** Stories over 384 tokens (our M=4 set, 4.7% of
 TinyStories) never open with "Once upon a time" (0.0% of 2,000 sampled, vs 57.8% of all stories); they open with
