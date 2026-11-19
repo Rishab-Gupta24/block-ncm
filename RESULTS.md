@@ -117,6 +117,11 @@ total. AR with speculative decoding is still about 11× slower than Block-NCM.
   plan makes the clean fine targets unpredictable, which teaches the local levels to ignore the plan, the
   opposite of the goal. Uniform corruption is visibly noise and does not have this problem.
 
+### Measured: plan KV cache speeds up training 2.0× (Kaggle T4, `experiments/test_fast.py`)
+
+Forward + backward, G=3, M=4, 2 documents: **ChunkedNCM 2.43 s, FastChunkedNCM 1.21 s**, with identical
+results (loss difference ≤ 8e-7 for G ∈ {0, 1, 3, 6, 11}, identical generated codes).
+
 ### Built: `blockncm/fast.py` (`FastChunkedNCM`, same weights and state_dict as ChunkedNCM)
 
 - **KV-cached plan**, exact: the prefix and plan keys/values are computed once and reused by every local
