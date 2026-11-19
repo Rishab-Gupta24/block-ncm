@@ -67,4 +67,13 @@ gr = sum(1 for p in ref.parameters() if p.grad is not None)
 check("anchor, G=3: KL > 0 and finite", 0 < sta["kl"] < 50, f"kl {sta['kl']:.4f}")
 check("gradients reach model, not reference", g > 0 and gr == 0, f"|grad| {g:.3g}, ref grads {gr}")
 check("reference not in state_dict", not any(k.startswith("ref") for k in model.state_dict()))
+model.zero_grad(set_to_none=True)
+with torch.no_grad():
+    model.kl_later = 1.0
+    torch.manual_seed(3); l_a, s_a = model.forward_loss(codes4, 3)
+    model.kl_later = 0.0
+    torch.manual_seed(3); l_b, s_b = model.forward_loss(codes4, 3)
+    model.kl_later = 1.0
+check("kl_later=0 lowers the objective (chunks 2+ unanchored), stats unchanged",
+      l_b.item() < l_a.item() and abs(s_a["kl"] - s_b["kl"]) < 1e-6, f"{l_a.item():.4f} -> {l_b.item():.4f}")
 print("ALL PASS" if ok else "SOME FAILED")

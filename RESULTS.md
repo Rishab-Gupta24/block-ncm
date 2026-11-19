@@ -99,6 +99,12 @@ What this shows:
   (the gap the gates are testing). Block-NCM's contribution is making NCM work at length, not matching AR quality.
 - **The seam metric has a floor above 1.0 on generated text:** AR has no seams at all and scores 1.04
   (length-matched) and 1.12 (natural length). So our 1.14 is close to that floor, and B0's 1.52 is clearly not.
+- **Length-matched without blocking AR's end-of-text** (first 217 tokens of our M=4 samples vs natural-length AR,
+  9.17): B0 23.8, Ours G=3 21.9, Ours G=3 + halo 4 21.5, Ours G=5 20.4, B2 19.7. Same ranking and the same ~2× gap
+  as the full-length comparison, so the gap is not a length artefact.
+- **Style caveat:** TinyStories-33M was trained on all stories and writes mostly "Once upon a time" openings, while
+  our M=4 models write in the long-story style (see the recipe-gap section), which GPT-2 Large scores about 1.1×
+  higher on real text. Part of the AR gap is therefore style, not quality.
 - **Speed:** 11 sequential passes vs about 462 for AR at matched length (one per token). Measured latency favours Block-NCM (0.08 s/sample on a T4 at
   batch 32 vs 0.24 s for AR on the RTX 5050 at batch 64) even though the AR model is smaller, but the AR side uses
   unoptimised Hugging Face `generate`, so this is indicative only. The 7B cost model (26.5× faster at batch 1, AR
@@ -412,13 +418,25 @@ control), `gate_unf`, `gate_a1`, `gate_kl1`, `gate_all` (unfiltered + α=1 + KL 
 | `gate_base` (repeat of the 20.7 recipe) | 1.533 | 21.0 | 3.91 |
 | `gate_a1` (equal weight per level, α=1) | 1.533 | 20.9 | 3.91 |
 | **`gate_kl1` (KL anchor to the released model, weight 1)** | 1.537 | **19.5** | **3.94** |
-| `gate_unf`, `gate_all` | — | encoding crashed (shared GPU); re-queued | |
+| **`gate_unf` (unfiltered openings, 60k stories of any length)** | 1.473 * | **17.0** | **3.98** |
+| **`gate_all` (unfiltered + α=1 + KL anchor 1)** | 1.484 * | **16.1** | **3.97** |
+
+\* NLL on the unfiltered validation openings, not comparable with the rows above.
 
 - **Level weighting does nothing** (20.9 vs 21.0), as the paper's α ablation predicted.
 - **The KL anchor helps: 21.0 → 19.5, and entropy recovers 3.91 → 3.94**, at almost no NLL cost (1.537 vs 1.533).
   It closes about 1.5 of the 4.5 points. With the style shift (about 1.6 points, below), about 1.4 points remain
   unexplained. Repeat-to-repeat noise is about 0.3 (20.7 vs 21.0).
-- Queued: weight 3 (`gate_kl3`), unfiltered openings alone and combined (`gate_unf`, `gate_all`, `gate_unf_kl3`).
+- **Training on unfiltered openings closes most of the gap: 21.0 → 17.0, entropy back to 3.98** (released: 16.5,
+  3.98). With the KL anchor added, 16.1, the released model's level within noise. So the "fine-tuning damage" at
+  single chunks was mostly the long-story subset, not the recipe: conditioning corruption plus the right data keeps
+  the released fluency. Part of this is the style effect on the metric itself (real long-story openings score
+  1.10× higher than all openings).
+- Consequence for the M=4 models: they must train on long stories (512 tokens of text), so their genPPL carries
+  this style offset; real long-story text at M=4 scores 6.1. The KL anchor is the part that transfers; it is being
+  tested at M=4 next (anchor 1 on all chunks, and with chunks 2–4 at 0.3×, since the reference model only knows
+  openings).
+- Queued: weight 3 (`gate_kl3`, `gate_unf_kl3`).
 
 **The long-story subset is a different style of story.** Stories over 384 tokens (our M=4 set, 4.7% of
 TinyStories) never open with "Once upon a time" (0.0% of 2,000 sampled, vs 57.8% of all stories); they open with

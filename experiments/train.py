@@ -66,6 +66,8 @@ ap.add_argument("--level-alpha", type=float, default=0.0,
 ap.add_argument("--kl-anchor", type=float, default=0.0,
                 help="weight of KL(frozen released model || model) on local levels, released model sees each chunk "
                      "alone; needs --fast")
+ap.add_argument("--kl-later", type=float, default=1.0,
+                help="multiplier of the KL anchor on chunks 2..M (the released model only saw story openings)")
 a = ap.parse_args()
 
 torch.manual_seed(a.seed)
@@ -102,14 +104,14 @@ model.grad_ckpt = a.grad_ckpt
 if a.level_alpha or a.kl_anchor:
     from blockncm.fast import FastChunkedNCM
     assert type(model) is FastChunkedNCM, "--level-alpha / --kl-anchor need --fast (plain FastChunkedNCM)"
-    model.level_alpha, model.kl_weight = a.level_alpha, a.kl_anchor
+    model.level_alpha, model.kl_weight, model.kl_later = a.level_alpha, a.kl_anchor, a.kl_later
     if a.kl_anchor:
         _, _, ref_net, ref_sd = load_released(a.ckpt)
         ref = FastChunkedNCM(ref_net, tk, ref_sd).cuda().eval()
         for p in ref.parameters():
             p.requires_grad_(False)
         model.__dict__["ref"] = ref  # not a submodule: stays in eval mode and out of state_dict / optimizer
-    print(f"level alpha {a.level_alpha}, KL anchor {a.kl_anchor}", flush=True)
+    print(f"level alpha {a.level_alpha}, KL anchor {a.kl_anchor} (chunks 2+: x{a.kl_later})", flush=True)
 if a.corrupt_mean > 0:
     model.corrupt = ChunkedNCM.linear_corruption(model.K, a.corrupt_mean, a.corrupt_span)
     print("conditioning corruption per level:", [round(p, 3) for p in model.corrupt], flush=True)

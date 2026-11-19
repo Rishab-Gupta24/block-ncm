@@ -180,8 +180,14 @@ class FastChunkedNCM(ChunkedNCM):
                     cid = torch.arange(M, device=dev).repeat_interleave(l)
                     r_emb = ref._embed(X[:, :, o:o + l].reshape(B, M * l, D).to(ref_pre.dtype), t, cid)
                     p_ref = F.softmax(ref.net.lm_heads[t](ref._local_pass(r_emb, t, M, ref_past, dev)).float(), -1)
-                kl = (p_ref * (torch.log(p_ref.clamp_min(1e-30)) - F.log_softmax(logits, -1))).sum()
-                kl_sum += kl.item(); kl_n += B * M * l
+                kl_pos = (p_ref * (torch.log(p_ref.clamp_min(1e-30)) - F.log_softmax(logits, -1))).sum(-1)
+                kl_sum += kl_pos.sum().item(); kl_n += B * M * l
+                later = getattr(self, "kl_later", 1.0)  # weight on chunks 2..M (the reference saw only openings)
+                if later != 1.0 and M > 1:
+                    cw = torch.full((M,), later, device=dev); cw[0] = 1.0
+                    kl = (kl_pos.view(B, M, l) * cw[None, :, None]).sum()
+                else:
+                    kl = kl_pos.sum()
                 obj = obj + w[t] * self.kl_weight * kl
             obj = obj + w[t] * nll
             nll_sum = nll_sum + nll

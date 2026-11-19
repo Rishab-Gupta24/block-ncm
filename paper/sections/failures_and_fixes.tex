@@ -28,11 +28,18 @@ its own errors compound. We ruled out the alternatives:
 \end{itemize}
 \emph{Fix.} Uniform code replacement with a linear 0.75$\to$0.25 schedule (targets clean) and lr
 $3{\times}10^{-5}$, chosen by a single-chunk gate (Table~\ref{tab:gate}).
-\emph{Outcome.} Single-chunk genPPL 47.7$\to$20.7. A residual cost of about 4--5 genPPL remains (20.5 plateau vs
-16.5). It did not respond to learning rate ($10^{-5}$ to $3{\times}10^{-5}$) or to a 4$\times$ larger batch.
-\textbf{Unresolved.} Most likely our corruption schedule differs in detail from the unpublished original. The
-cost is the same for every variant, so comparisons between variants remain fair. Absolute quality is below the
-released model.
+\emph{Outcome.} Single-chunk genPPL 47.7$\to$20.7. A residual gap of about 4--5 genPPL remained (20.5 plateau vs
+16.5). It did not respond to learning rate ($10^{-5}$ to $3{\times}10^{-5}$), to a 4$\times$ larger batch, or to
+per-level loss weighting (20.9).
+\emph{Diagnosis of the residual.} The single-chunk test trained on the openings of stories longer than 384 tokens
+(our $M{=}4$ set, 4.7\% of TinyStories). These are a different style of story: none opens with ``Once upon a
+time'', against 58\% of all stories and 70\% of the released model's samples. Trained on 60k unfiltered openings
+instead, the same recipe scores 17.0 (entropy 3.98, as released); adding a KL term that anchors the model to the
+frozen released model gives 16.1, the released level within noise. The anchor alone, on the long-story openings,
+gives 19.5. \textbf{Mostly resolved:} the residual was largely the data subset, not damage from fine-tuning. The
+$M{=}4$ models must train on long stories, so their absolute genPPL carries this style offset (real long-story
+openings score 1.10$\times$ higher than all openings); the cost is the same for every variant, so comparisons
+between variants remain fair.
 
 \begin{table}[h]
 \centering
