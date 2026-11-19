@@ -1,0 +1,176 @@
+% Appendix: what failed for each model and what fixed it. Numbers from RESULTS.md (one seed unless stated).
+\section{What Failed and How It Was Fixed}
+\label{sec:failures}
+
+This appendix records, model by model, every failure we hit, the evidence for it, the diagnosis, and what
+fixed it. Unresolved failures are reported as such. All runs fine-tune the released TinyStories NCM
+(88.6M parameters, 11 target levels, 641 codes per 128-token chunk) on $M{=}4$ chunks (512 tokens) for 1{,}500
+steps of 8 documents. NLL is measured on all 1{,}228 validation documents with padding masked. genPPL uses
+GPT-2 Large, $2$ seeds $\times$ 256 samples, temperature 1.0. The \emph{boundary ratio} is the genPPL of 64-token
+windows across a chunk seam divided by that of windows inside a chunk (real text: 1.01).
+
+\subsection{Shared pipeline (all models)}
+
+\paragraph{F1. Fine-tuning destroyed free generation.}
+\emph{Evidence.} The first $M{=}4$ runs (clean inputs, lr $10^{-4}$) reached good teacher-forced NLL, but
+genPPL was 47.8--53.5 for every model. Fine-tuned B0 also scored 47.7 on \emph{single} 128-token chunks, against
+16.5 for the released model, with no chunking involved. On story openings, fine-tuned B0 beat the released
+model on NLL (1.179 vs 1.558, better on 100\% of documents) yet generated 3$\times$ worse.
+\emph{Diagnosis.} The released generator is trained with \emph{conditioning corruption}: a fraction of input
+codes is replaced by random codes from the same codebook, at a rate decreasing linearly over levels (mean 0.5;
+NCM paper, Sec.~3.4 and App.~F.3). Clean fine-tuning makes the model trust its conditioning, so at sampling time
+its own errors compound. We ruled out the alternatives:
+\begin{itemize}[nosep]
+  \item train and generation inputs are bit-identical at every level;
+  \item the tokenizer is unchanged by fine-tuning;
+  \item sampling settings match the released evaluation;
+  \item a train-save-load-generate control at lr $10^{-12}$ gives 16.6.
+\end{itemize}
+\emph{Fix.} Uniform code replacement with a linear 0.75$\to$0.25 schedule (targets clean) and lr
+$3{\times}10^{-5}$, chosen by a single-chunk gate (Table~\ref{tab:gate}).
+\emph{Outcome.} Single-chunk genPPL 47.7$\to$20.7. A residual cost of about 4--5 genPPL remains (20.5 plateau vs
+16.5). It did not respond to learning rate ($10^{-5}$ to $3{\times}10^{-5}$) or to a 4$\times$ larger batch.
+\textbf{Unresolved.} Most likely our corruption schedule differs in detail from the unpublished original. The
+cost is the same for every variant, so comparisons between variants remain fair. Absolute quality is below the
+released model.
+
+\begin{table}[h]
+\centering
+\caption{Single-chunk gate: 300 steps on story openings, genPPL of 256 samples (released model: 16.5).}
+\label{tab:gate}
+\begin{tabular}{lcc}
+\toprule
+recipe & genPPL & entropy \\
+\midrule
+lr $10^{-4}$, clean & 41.0 & 3.99 \\
+lr $10^{-5}$, clean & 34.1 & 3.98 \\
+lr $10^{-4}$, corruption mean 0.25 & 24.4 & 3.94 \\
+lr $10^{-4}$, corruption mean 0.5 (linear) & 22.2 & 3.92 \\
+lr $10^{-4}$, corruption 0.5 (flat) & 21.8 & 3.92 \\
+\textbf{lr $3{\times}10^{-5}$, corruption mean 0.5 (chosen)} & \textbf{20.7} & 3.92 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{F2. Padding inflated the agreement between models.}
+37\% of chunk-4 codes are padding: stories end before token 512. Padding is equally easy for every model and
+diluted the differences. \emph{Fix:} per-document lengths are saved at encoding time and padding codes are
+masked in every NLL. A per-document re-encoding check confirms the mask lines up with the stored codes.
+\emph{Outcome:} the B0$\to$B2 gap grew from 0.015 to 0.020 nats in the clean-recipe runs; all reported NLL is
+padding-free.
+
+\paragraph{F3. Memory: the training graph did not fit in 8\,GB.}
+The single dense-mask training sequence ($M{=}4$, all levels) exceeds 8\,GB. \emph{Fix:} a per-level training
+path (one short sequence per level, built from the generation layouts). Its loss equals the dense path's to within
+$10^{-6}$ for $G\in\{0,1,3,6,11\}$, and gradient checkpointing is used throughout.
+
+\paragraph{F4. Mixed precision.}
+On the T4 (no bf16), the quantizer's convolutions produced NaN in fp16, and training continued silently on NaN
+loss. \emph{Fix:} the quantizer always runs in fp32; training aborts on any non-finite loss; the pipeline greps
+every stage log for NaN. Separately, the bf16 quantizer loses precision even on the RTX~5050 (loss 3.116 vs
+2.965 in fp32). This may explain why our reproduction of the released model scores 16.38 against the paper's
+15.41; \textbf{a test is pending}.
+
+\paragraph{F5. Evaluation running out of memory.}
+Generation at $M{=}6$ and plan search (8 plans) ran out of memory at batch 64. \emph{Fix:} every evaluation
+retries at half the batch size. Batch size changes only speed, not the samples' distribution.
+
+\subsection{B0: independent chunks ($G{=}0$)}
+\emph{Failure (by design):} no information crosses chunks. With the fixed recipe it has the worst seams
+(boundary ratio 1.52) and frequent character-name drift between chunks; genPPL is 24.1. \emph{No fix:} B0 is the
+lower bound that the plan must beat.
+
+\subsection{Ours: Block-NCM ($G{=}3$, plan over levels 1--3)}
+\paragraph{O1. The plan alone did not fix the seams.}
+\emph{Evidence.} Ours has the best NLL of the three baselines (1.7438 vs 1.7486 B0 and 1.7780 B2; $-0.0049$ nats
+vs B0, 95\% CI $[-0.0056,-0.0042]$). But it closed only about 40\% of the B0$\to$B2 gap in generation: genPPL
+22.0 vs 19.0, boundary ratio 1.39 vs 1.17.
+\emph{Diagnosis.} A level-3 plan carries topic and characters. Seams need token-level continuity, though, and
+that is decided by the local fine levels, which cannot see the neighbouring chunk.
+\emph{Fix: halo attention.} Each local level also attends to the inputs at the last $h$ positions of the previous
+chunk and the first $h$ of the next. These inputs come from coarser levels that are already generated, so this
+adds no sequential passes. It costs $2h$ extra positions per chunk per local level (about 10\% compute for $h{=}4$).
+\emph{Outcome} ($h{=}4$):
+\begin{itemize}[nosep]
+  \item boundary ratio 1.39$\to$1.19, closing 95\% of the B0$\to$B2 gap;
+  \item best NLL of all runs (1.7361);
+  \item genPPL 22.0$\to$21.0.
+\end{itemize}
+Plan search (8 sampled plans, keep the most likely) adds a further gain: 20.0. Widths $h\in\{2,8\}$ and
+combinations with $G\in\{5,6\}$ are \textbf{running}.
+
+\paragraph{O2. Recomputing the plan made training slow.}
+The reference implementation recomputes the global plan for every local level.
+\emph{Fix:} compute the plan's keys and values once and cache them. This is exact (the losses match), and a
+training step is 2.0$\times$ faster on a T4 (1.21\,s vs 2.43\,s).
+
+\paragraph{O3. Generation quality is still below the released model.}
+Samples keep a coherent plot across all four chunks, but grammar slips are frequent. That is a consequence of F1
+and of model size. Fixes under test: lower sampling temperature, and plan-only adapters (next).
+\textbf{Open.}
+
+\subsection{Ours with more global levels ($G{=}5$, $G{=}6$)}
+More global levels improve generation at the training length: genPPL 20.0 ($G{=}5$) and 19.6 ($G{=}6$) vs 19.0
+for B2. But they \emph{fail to extrapolate}. At $M{=}6$ (trained on $M{=}4$), $G{=}6$ degrades to 30.7 and
+$G{=}5$ to 23.8, while $G{=}3$ holds (21.8) and $G{=}3$ with halo is best (21.5). $G{=}6$ also loses on the fine
+levels (level 6 NLL 1.86 vs 1.68). \emph{Resolution:} keep the plan small ($G\le 5$) and fix seams with halo
+rather than with more global levels.
+
+\subsection{B2: fully global ($G{=}11$)}
+B2 generates best at $M{=}4$ but has the \emph{worst} NLL of all runs (1.7780), losing on levels 6--11 and on
+chunk 4. More importantly, it \textbf{collapses beyond the training length}: genPPL 19.0$\to$33.5 at $M{=}6$, with
+high seed variance (sd 2.3). Global attention across all chunks appears to fit the training length. This is the
+baseline's failure, not ours, and it motivates Block-NCM: B2's advantage exists only at the length it was
+trained on.
+
+\subsection{Plan-only adapters (frozen generator)}
+Goal: keep the released model's fluency (F1) by freezing the generator and training only LoRA adapters on the
+global passes, plus a learned bias on attention to the plan.
+\begin{itemize}[nosep]
+  \item \emph{Crash:} a float attention mask with gradients fails in the fused GPU attention kernel.
+        \emph{Fix:} implement the plan bias as an extra key dimension.
+  \item \emph{Bias never opened:} Adam moves a parameter by about one learning-rate step per update, so a bias
+        initialised at $-8$ with lr $10^{-4}$ would need $10^5$ steps. \emph{Fix:} initialise at $-6$, with its
+        own lr $10^{-2}$.
+  \item \emph{Leak:} adapters also changed the prefix and the chunk embeddings of local levels, so the model was no
+        longer ``plan-only''. \emph{Fix:} adapters skip the prefix, and chunk embeddings apply to global levels
+        only. Seven unit checks verify this.
+\end{itemize}
+\emph{Outcome:} training is \textbf{running}.
+
+\subsection{Layer-drop refiner (negative result, moved to future work)}
+Goal: cut serving cost by running local levels with 6 of the 12 layers, with each kept layer reading the plan
+cache of the matching global layer.
+\begin{itemize}[nosep]
+  \item \emph{Untrained:} the best 6-layer pattern ($[0,1,2,9,10,11]$) loses 4.0 nats on levels 4--11.
+  \item \emph{Fix attempted:} distillation from the full-depth model (KL weight 1.0, 1{,}500 steps). This
+        recovered most of the loss, but not enough:
+        \begin{itemize}[nosep]
+          \item +0.50 nats with genPPL 21.6$\to$41.6 (levels 4--11, 1.55$\times$ faster per sample);
+          \item +0.30 nats with genPPL 32.0 (levels 7--11, 1.38$\times$ faster).
+        \end{itemize}
+\end{itemize}
+\textbf{Not fixed.} Depth reduction is left to follow-up work. Block-NCM's serving-cost claims are therefore
+restricted to low batch sizes (Sec.~\ref{sec:complexity}).
+
+\subsection{Summary}
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{p{2.6cm}p{4.2cm}p{4.2cm}p{2.2cm}}
+\toprule
+model / part & failure & fix & status \\
+\midrule
+all (recipe) & clean fine-tuning: genPPL 47.7 on single chunks & conditioning corruption 0.5, lr $3{\times}10^{-5}$ & 20.7; 4--5 gap \textbf{open} \\
+all (metrics) & padding diluted NLL & mask padding per document & fixed \\
+all (memory) & dense graph $>$ 8\,GB & per-level path ($<10^{-6}$ equal) & fixed \\
+all (fp16) & quantizer NaN, silent & fp32 quantizer, abort on NaN & fixed \\
+Ours $G{=}3$ & seams 1.39 & halo attention, $h{=}4$ & 1.19, fixed \\
+Ours $G{=}3$ & plan recomputed per level & KV-cached plan (exact) & 2.0$\times$, fixed \\
+Ours $G{=}5,6$ & collapse at $M{=}6$ & keep $G$ small + halo & resolved \\
+B2 & collapse at $M{=}6$ (33.5) & none (baseline) & finding \\
+plan-only adapters & mask crash; bias stuck; leak & key-dim bias; own lr; skip prefix & \textbf{running} \\
+layer-drop refiner & +0.3--0.5 nats, genPPL $\times$1.5--2 & distillation (insufficient) & \textbf{failed} \\
+\bottomrule
+\end{tabular}
+\end{table}
