@@ -87,20 +87,26 @@ results, doc_nll = {}, {}
 for spec in a.runs:
     name, G = spec.rsplit(":", 1)
     G = int(G)
+    m_ = model
     if name == "released":  # the released weights, zero-shot
         st = {"step": 0}
         model.load_state_dict(base_state, strict=True)
     else:
         st = torch.load(os.path.join(os.path.expanduser(a.runs_dir), name, "model.pt"), map_location="cpu",
                         weights_only=False)
-        model.load_state_dict(st["model"], strict=True)
-    model.halo = st.get("args", {}).get("halo", 0) if name != "released" else 0
+        ra = st.get("args", {})
+        if ra.get("plan_adapter", 0):  # plan-only adapter run: its own model class (extra LoRA / bias params)
+            from blockncm.adapters import PlanAdapterNCM
+            m_ = PlanAdapterNCM(net, tk, sd, r=ra["plan_adapter"], alpha=ra.get("lora_alpha", ra["plan_adapter"]),
+                                plan_bias=ra.get("plan_bias", -8.0)).cuda().eval()
+        m_.load_state_dict(st["model"], strict=True)
+    m_.halo = st.get("args", {}).get("halo", 0) if name != "released" else 0
     nll = [[] for _ in range(K)]
     with torch.no_grad():
         for s in range(0, len(val), a.bs):
             c = torch.from_numpy(val[s:s + a.bs].astype(np.int64)).cuda()
             with torch.autocast("cuda", dtype=torch.bfloat16):
-                _, stt = model.forward_loss(c, G, per_code=True)
+                _, stt = m_.forward_loss(c, G, per_code=True)
             for t in range(K):
                 nll[t].append(stt["codes_nll"][t].float().cpu())
     nll = [torch.cat(x) for x in nll]  # each (N, M, l_t)

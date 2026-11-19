@@ -36,7 +36,24 @@ halo (neighbours' level-t inputs) already lowers the released model's M=4 loss (
 **Fairness:** B0 and B2 must get the same adapter budget (B0: adapter on nothing global, so B0 = released model
 plus chunk embeddings; B2: adapter on all passes).
 
-**First test (cheap):** LoRA r=16 on global passes only, local frozen, G=3, M=4, corruption 0.5, 1,500 steps.
+**Implemented: `blockncm/adapters.py` (`PlanAdapterNCM`), `train.py --plan-adapter 16`.** Details that
+turned out to matter (all checked in `experiments/test_adapters.py`):
+- **Plan logit bias,** one per layer and head, initialised negative so local levels start by ignoring the plan.
+  At −8 the released model's local-level NLL is 1.801, close to no plan (1.791), against 2.458 with the plan
+  and no bias. It is implemented as one extra key dimension: gradients through a float attention mask
+  crash the GPU's fused attention kernel.
+- **The bias needs its own learning rate.** Adam moves a parameter by about one learning rate per step, so
+  at lr 1e-4 a −8 bias would move ~0.15 in 1,500 steps and the plan would never open. Defaults: −6 and
+  lr 1e-2.
+- **Prefix and chunk embeddings.** The adapters skip the prefix positions, and chunk embeddings go on
+  global-level inputs only. Then, with the bias closed, local levels equal the released model (max diff
+  4.8e-7 with random adapters), and a single chunk with no plan equals it exactly.
+- **Gradients.** Local-level loss alone reaches the global adapters through the cached plan K/V (they are
+  never detached); generator weights receive no gradient.
+- **Fair B0** under this scheme is the released model itself (no global levels to adapt): zero-shot M=4
+  genPPL 14.4, boundary ratio 1.25.
+
+**First test (queued):** LoRA r=16 on global passes only, local frozen, G=3, M=4, corruption 0.5, 1,500 steps.
 Measure (a) single-chunk genPPL (should stay 16.5), (b) local-level NLL vs B0 (must beat it, or the local levels
 are ignoring the plan), (c) boundary ratio.
 

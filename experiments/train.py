@@ -47,6 +47,11 @@ ap.add_argument("--keep-ckpts", action="store_true", help="also save model_step{
 ap.add_argument("--data-suffix", default="", help="e.g. _sent for sentence-aligned chunks (train_M4_sent.npy)")
 ap.add_argument("--fast", action="store_true", help="FastChunkedNCM: KV-cached plan (exact, faster)")
 ap.add_argument("--halo", type=int, default=0, help="halo attention width for local levels (implies --fast)")
+ap.add_argument("--plan-adapter", type=int, default=0,
+                help="LoRA rank for plan-only adapters: frozen generator, LoRA on global passes, local passes frozen")
+ap.add_argument("--lora-alpha", type=float, default=0, help="LoRA alpha (default = rank, i.e. scale 1)")
+ap.add_argument("--plan-bias", type=float, default=-6.0, help="initial logit bias of local queries on plan keys")
+ap.add_argument("--plan-bias-lr", type=float, default=1e-2, help="learning rate of the plan bias")
 ap.add_argument("--min-len", type=int, default=0,
                 help="keep only documents with at least this many tokens (needs *_len.npy from prepare_chunks)")
 a = ap.parse_args()
@@ -58,7 +63,14 @@ os.makedirs(run_dir, exist_ok=True)
 json.dump(vars(a), open(os.path.join(run_dir, "args.json"), "w"), indent=2)
 
 cfg, tk, net, sd = load_released(a.ckpt)
-if a.fast or a.halo:
+if a.plan_adapter:
+    from blockncm.adapters import PlanAdapterNCM
+    a.lora_alpha = a.lora_alpha or a.plan_adapter
+    model = PlanAdapterNCM(net, tk, sd, halo=a.halo, r=a.plan_adapter, alpha=a.lora_alpha,
+                           plan_bias=a.plan_bias).cuda()
+    print(f"plan-only adapters: trainable {sum(p.numel() for p in model.parameters() if p.requires_grad):,} "
+          f"of {sum(p.numel() for p in model.parameters()):,} parameters", flush=True)
+elif a.fast or a.halo:
     from blockncm.fast import FastChunkedNCM
     model = FastChunkedNCM(net, tk, sd, halo=a.halo).cuda()
 else:
@@ -82,11 +94,12 @@ val = val[: a.val_docs]
 print(f"train docs {len(train):,}  val docs {len(val):,}  M={a.M} G={a.G} K={model.K}", flush=True)
 
 chunk_params = list(model.chunk_emb.parameters())
-other = [p for n, p in model.named_parameters() if p.requires_grad and not n.startswith("chunk_emb")]
-opt = torch.optim.AdamW(
-    [{"params": other, "lr": a.lr}, {"params": chunk_params, "lr": a.chunk_emb_lr, "weight_decay": 0.0}],
-    lr=a.lr, betas=(0.9, 0.95), weight_decay=a.wd,
-)
+other = [p for n, p in model.named_parameters()
+         if p.requires_grad and not n.startswith("chunk_emb") and n != "plan_bias"]
+groups = [{"params": other, "lr": a.lr}, {"params": chunk_params, "lr": a.chunk_emb_lr, "weight_decay": 0.0}]
+if hasattr(model, "plan_bias"):  # Adam moves a parameter ~lr per step: the bias needs a large lr to open
+    groups.append({"params": [model.plan_bias], "lr": a.plan_bias_lr, "weight_decay": 0.0})
+opt = torch.optim.AdamW(groups, lr=a.lr, betas=(0.9, 0.95), weight_decay=a.wd)
 base_lrs = [g["lr"] for g in opt.param_groups]
 
 
@@ -139,11 +152,13 @@ for step in range(a.steps):
 
     if step % 25 == 0:
         el = time.time() - t0
+        pb = float(model.plan_bias.mean()) if hasattr(model, "plan_bias") else None
         print(f"step {step:5d} loss {st['nll']:.4f} glob {st['nll_global']:.4f} loc {st['nll_local']:.4f} "
               f"gn {gn:.2f} lr {opt.param_groups[0]['lr']:.2e} {el / 60:.1f}min "
-              f"mem {torch.cuda.max_memory_allocated() / 2**30:.2f}GB", flush=True)
+              f"mem {torch.cuda.max_memory_allocated() / 2**30:.2f}GB" + (f" plan_bias {pb:.2f}" if pb is not None else ""),
+              flush=True)
         log.write(json.dumps({"step": step, "train": {k: st[k] for k in ("nll", "nll_global", "nll_local")},
-                              "gn": float(gn), "time": el}) + "\n"); log.flush()
+                              "gn": float(gn), "time": el, "plan_bias": pb}) + "\n"); log.flush()
     last = step == a.steps - 1 or (a.time_limit and time.time() - t0 > a.time_limit * 60)
     if (step + 1) % a.eval_every == 0 or last:
         ev = evaluate()

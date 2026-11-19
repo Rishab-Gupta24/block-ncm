@@ -48,7 +48,12 @@ cfg, tk, net, sd = load_released(a.ckpt)
 st = torch.load(os.path.join(os.path.expanduser(a.run), "model.pt"), map_location="cpu", weights_only=False) \
     if a.run else None
 halo = a.halo if a.halo is not None else (st["args"].get("halo", 0) if st else 0)
-if a.fast or halo or a.n_plans > 1:
+ra = st["args"] if st else {}
+if ra.get("plan_adapter", 0):
+    from blockncm.adapters import PlanAdapterNCM
+    model = PlanAdapterNCM(net, tk, sd, halo=halo, r=ra["plan_adapter"], alpha=ra.get("lora_alpha") or ra["plan_adapter"],
+                           plan_bias=ra.get("plan_bias", -8.0)).cuda().eval()
+elif a.fast or halo or a.n_plans > 1:
     from blockncm.fast import FastChunkedNCM
     model = FastChunkedNCM(net, tk, sd, halo=halo).cuda().eval()
 else:
