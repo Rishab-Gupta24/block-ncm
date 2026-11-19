@@ -82,6 +82,38 @@ What this shows:
   plausibly because it is under-trained and sees RoPE positions up to 4×128 that the released model never saw.
   B2 wins on levels 4–5, where Ours captures only 29–43% of the gap. So the best G is probably between 3 and 6.
   The G ∈ {4, 5, 6} ablation is the obvious next run.
+### Generation, step 1500 (`experiments/sample_eval.py`, 2 seeds × 256 samples, temperature 1.0)
+
+| | B0 | **Ours (G=3)** | B2 | Ours: share of B0→B2 gap closed |
+|---|---|---|---|---|
+| genPPL, GPT-2 Large (mean ± sd over seeds) | 53.5 ± 0.4 | **51.7 ± 0.8** | 47.8 ± 0.8 | 31% |
+| boundary-window genPPL (32 + 32 tokens across a chunk seam) | 96.6 | 94.8 | 85.8 | |
+| inner-window genPPL (64 tokens inside a chunk) | 76.4 | 80.1 | 80.2 | |
+| **boundary / inner ratio** | 1.264 | **1.184** | 1.071 | 41% |
+| unigram entropy | 4.72 | 4.65 | 4.61 | |
+| mean tokens, share reaching chunk 4 | 448, 98% | 433, 97% | 431, 96% | |
+| latency, s/sample (batch 64, 11 passes each) | 0.094 | 0.091 | 0.098 | |
+
+What this shows:
+- **The ranking matches NLL, but Ours closes much less of the gap here: 31–41% vs 77–84%.**
+  B2 is clearly best on every generation metric at M=4.
+- **The seams are where Ours falls short.** The boundary ratio falls from 1.26 (B0) to 1.18 (Ours), against
+  1.07 for B2. A level-3 plan carries topic and characters, but the seam needs token-level continuity: the
+  sentence ending in chunk m has to run on into chunk m+1. In Ours that is decided by the local fine levels,
+  which cannot see the neighbouring chunk.
+- **Latency is identical at M=4.** All three take 11 passes; B2's global attention over 4×l tokens costs
+  nothing noticeable here. Ours' cost advantage over B2 only matters at larger M, or measured in memory and
+  FLOPs. At M=4 there is no speed case for Ours over B2.
+- **Overall quality is low for every model:** genPPL around 50, against 16.4 for the released model on single
+  128-token samples. The two are not directly comparable (4× longer texts, and windows scored without
+  context). Still, the samples show local garbling ("six, six, five bugs"). A real-text reference is missing:
+  genPPL of real 512-token TinyStories and of the zero-shot model (running).
+
+Candidate fix for the seams: **halo attention.** Let local level t also attend to the level-t *inputs* of the
+nearest w positions of the neighbouring chunks. Level-t inputs come from levels < t, which are already
+generated, so this adds no sequential passes. Its cost is O(l·(l + 2w)) instead of B2's O((M·l)²).
+It targets exactly the deficit measured here.
+
 - Caveat: the padding mask comes from token windows rebuilt with `prepare_chunks.py`'s selection.
   Re-encoding the first 4 docs reproduces 91% of the stored codes, not 100%. That could be encoder numerics
   (different batch size), or a document mismatch. To check: compare per document; a mismatched document would

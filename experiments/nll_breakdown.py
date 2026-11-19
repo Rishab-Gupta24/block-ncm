@@ -33,6 +33,7 @@ ap.add_argument("--data", default="~/ncm/data/tinystories")
 ap.add_argument("--val-every", type=int, default=100)
 ap.add_argument("--coarse", type=int, default=3, help="levels 1..coarse count as coarse")
 ap.add_argument("--bs", type=int, default=8)
+ap.add_argument("--n-boot", type=int, default=1000)
 ap.add_argument("--out", default="")
 a = ap.parse_args()
 
@@ -81,7 +82,7 @@ for l in lt:
 print("fraction of non-padding codes per chunk:",
       [round(float(torch.cat([r[:, k].flatten() for r in real]).float().mean()), 3) for k in range(a.M)])
 
-results = {}
+results, doc_nll = {}, {}
 for spec in a.runs:
     name, G = spec.rsplit(":", 1)
     G = int(G)
@@ -115,6 +116,10 @@ for spec in a.runs:
             "per_level": [agg([t], mk) for t in allv],
             "per_chunk": [agg(allv, mk, k) for k in range(a.M)],
         }
+    # per-document NLL over non-padding codes (for paired comparisons)
+    num = sum((nll[t] * real[t]).sum((1, 2)) for t in allv)
+    den = sum(real[t].sum((1, 2)) for t in allv)
+    doc_nll[name] = (num / den).numpy()
     results[name] = r
     print(name, json.dumps({k: round(v, 4) for k, v in r["nonpad"].items() if not isinstance(v, list)}), flush=True)
 
@@ -139,6 +144,22 @@ def table(tag):
 for tag in ("all", "nonpad"):
     print(f"\n### NLL ({'all codes' if tag == 'all' else 'non-padding codes only'})\n")
     print(table(tag))
+
+# paired per-document differences vs the first and last run (B0 and B2), 95% bootstrap CI over documents
+rng = np.random.default_rng(0)
+boot = rng.integers(0, len(val), size=(a.n_boot, len(val)))
+print(f"\n### Paired per-document NLL difference (non-padding), 95% bootstrap CI, {len(val)} docs\n")
+print("| run | vs " + names[0] + " | vs " + names[-1] + " |\n|---|---|---|")
+for n in names:
+    cells = []
+    for ref in (names[0], names[-1]):
+        d = doc_nll[n] - doc_nll[ref]
+        bs = d[boot].mean(1)
+        lo, hi = np.percentile(bs, [2.5, 97.5])
+        cells.append(f"{d.mean():+.4f} [{lo:+.4f}, {hi:+.4f}]  wins {np.mean(d < 0):.0%}")
+        results[n].setdefault("paired", {})[ref] = {"mean": float(d.mean()), "ci95": [float(lo), float(hi)],
+                                                   "frac_docs_better": float(np.mean(d < 0))}
+    print(f"| {n} | {cells[0]} | {cells[1]} |")
 out = a.out or os.path.join(os.path.expanduser(a.runs_dir), f"nll_breakdown_M{a.M}.json")
 json.dump(results, open(out, "w"), indent=2)
 print("->", out)
