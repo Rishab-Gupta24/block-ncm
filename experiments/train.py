@@ -52,6 +52,11 @@ ap.add_argument("--plan-adapter", type=int, default=0,
 ap.add_argument("--lora-alpha", type=float, default=0, help="LoRA alpha (default = rank, i.e. scale 1)")
 ap.add_argument("--plan-bias", type=float, default=-6.0, help="initial logit bias of local queries on plan keys")
 ap.add_argument("--plan-bias-lr", type=float, default=1e-2, help="learning rate of the plan bias")
+ap.add_argument("--refiner-layers", default="", help="layer-drop refiner: comma-separated layer ids, e.g. 0,2,4,6,8,11")
+ap.add_argument("--refiner-start-level", type=int, default=0, help="first (1-based) target level using the refiner "
+                                                                     "(default G+1 = all local levels)")
+ap.add_argument("--distill", type=float, default=1.0, help="weight of KL(full-depth teacher || refiner)")
+ap.add_argument("--init-from", default="", help="run dir whose model.pt initialises the model (refiner: the teacher)")
 ap.add_argument("--min-len", type=int, default=0,
                 help="keep only documents with at least this many tokens (needs *_len.npy from prepare_chunks)")
 a = ap.parse_args()
@@ -63,7 +68,18 @@ os.makedirs(run_dir, exist_ok=True)
 json.dump(vars(a), open(os.path.join(run_dir, "args.json"), "w"), indent=2)
 
 cfg, tk, net, sd = load_released(a.ckpt)
-if a.plan_adapter:
+if a.refiner_layers:
+    from blockncm.refiner import refiner_from_run
+    assert a.init_from, "--refiner-layers needs --init-from (the full-depth teacher run)"
+    a.refiner_start_level = a.refiner_start_level or a.G + 1
+    assert a.refiner_start_level > a.G, "the refiner replaces local levels only"
+    init = torch.load(os.path.join(os.path.expanduser(a.init_from), "model.pt"), map_location="cpu", weights_only=False)
+    model = refiner_from_run(net, tk, sd, init["model"], layers=[int(x) for x in a.refiner_layers.split(",")],
+                             start_level=a.refiner_start_level, distill=a.distill).cuda()
+    model.freeze_base()
+    print(f"refiner: layers {model.layers} from level {model.start_level}, distill {a.distill}, teacher {a.init_from}; "
+          f"trainable {sum(p.numel() for p in model.parameters() if p.requires_grad):,}", flush=True)
+elif a.plan_adapter:
     from blockncm.adapters import PlanAdapterNCM
     a.lora_alpha = a.lora_alpha or a.plan_adapter
     model = PlanAdapterNCM(net, tk, sd, halo=a.halo, r=a.plan_adapter, alpha=a.lora_alpha,
@@ -155,8 +171,8 @@ for step in range(a.steps):
         pb = float(model.plan_bias.mean()) if hasattr(model, "plan_bias") else None
         print(f"step {step:5d} loss {st['nll']:.4f} glob {st['nll_global']:.4f} loc {st['nll_local']:.4f} "
               f"gn {gn:.2f} lr {opt.param_groups[0]['lr']:.2e} {el / 60:.1f}min "
-              f"mem {torch.cuda.max_memory_allocated() / 2**30:.2f}GB" + (f" plan_bias {pb:.2f}" if pb is not None else ""),
-              flush=True)
+              f"mem {torch.cuda.max_memory_allocated() / 2**30:.2f}GB" + (f" plan_bias {pb:.2f}" if pb is not None else "")
+              + (f" kl {st['kl']:.4f}" if "kl" in st else ""), flush=True)
         log.write(json.dumps({"step": step, "train": {k: st[k] for k in ("nll", "nll_global", "nll_local")},
                               "gn": float(gn), "time": el, "plan_bias": pb}) + "\n"); log.flush()
     last = step == a.steps - 1 or (a.time_limit and time.time() - t0 > a.time_limit * 60)

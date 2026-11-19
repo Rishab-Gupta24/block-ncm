@@ -49,7 +49,11 @@ st = torch.load(os.path.join(os.path.expanduser(a.run), "model.pt"), map_locatio
     if a.run else None
 halo = a.halo if a.halo is not None else (st["args"].get("halo", 0) if st else 0)
 ra = st["args"] if st else {}
-if ra.get("plan_adapter", 0):
+if ra.get("refiner_layers"):
+    from blockncm.refiner import RefinerNCM
+    model = RefinerNCM(net, tk, sd, halo=halo, layers=[int(x) for x in ra["refiner_layers"].split(",")],
+                       start_level=ra["refiner_start_level"]).cuda().eval()
+elif ra.get("plan_adapter", 0):
     from blockncm.adapters import PlanAdapterNCM
     model = PlanAdapterNCM(net, tk, sd, halo=halo, r=ra["plan_adapter"], alpha=ra.get("lora_alpha") or ra["plan_adapter"],
                            plan_bias=ra.get("plan_bias", -8.0)).cuda().eval()

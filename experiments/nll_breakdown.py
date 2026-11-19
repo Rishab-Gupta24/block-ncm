@@ -95,7 +95,11 @@ for spec in a.runs:
         st = torch.load(os.path.join(os.path.expanduser(a.runs_dir), name, "model.pt"), map_location="cpu",
                         weights_only=False)
         ra = st.get("args", {})
-        if ra.get("plan_adapter", 0):  # plan-only adapter run: its own model class (extra LoRA / bias params)
+        if ra.get("refiner_layers"):  # layer-drop refiner run: its own model class (extra refiner blocks)
+            from blockncm.refiner import RefinerNCM
+            m_ = RefinerNCM(net, tk, sd, layers=[int(x) for x in ra["refiner_layers"].split(",")],
+                            start_level=ra["refiner_start_level"]).cuda().eval()
+        elif ra.get("plan_adapter", 0):  # plan-only adapter run: its own model class (extra LoRA / bias params)
             from blockncm.adapters import PlanAdapterNCM
             m_ = PlanAdapterNCM(net, tk, sd, r=ra["plan_adapter"], alpha=ra.get("lora_alpha", ra["plan_adapter"]),
                                 plan_bias=ra.get("plan_bias", -8.0)).cuda().eval()

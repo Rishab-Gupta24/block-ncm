@@ -57,6 +57,20 @@ turned out to matter (all checked in `experiments/test_adapters.py`):
 Measure (a) single-chunk genPPL (should stay 16.5), (b) local-level NLL vs B0 (must beat it, or the local levels
 are ignoring the plan), (c) boundary ratio.
 
+## 2b. Layer-drop refiner (first step toward the asymmetric planner/refiner)
+
+`blockncm/refiner.py` (`RefinerNCM`): local levels ≥ `--refiner-start-level` run a **copy** of a subset S of
+the blocks (NCM shares weights across levels, so training the refiner must not touch the global passes);
+local block j reads the cached plan K/V of global layer S[j]. Training: cross-entropy plus KL to the
+**full-depth model on the same inputs and plan** (the teacher is the trained full-depth Block-NCM, not the
+released model, which has never seen a plan, so KL to it would penalise plan use). Global passes frozen.
+Checks (`experiments/test_refiner.py`): 12/12 layers equal FastChunkedNCM exactly; levels below the start level
+unchanged; only the refiner copy gets gradients; plan K/V taken from the kept layer ids.
+
+Depth probe (`experiments/depth_probe.py`, no training): untrained layer drop costs ~4 nats on the local levels
+(one-document CPU check: 6/12 uniform [0,2,4,6,8,11] best; 3/12 prefix best). Distillation has to recover this.
+The cost model predicts ~1.85× faster generation at 6/12 layers from level 4; the queued run measures it.
+
 ## 3. Sentence-aligned chunks (paper 1 ablation)
 
 `experiments/prepare_chunks.py --align sentence` packs whole sentences into each 128-token chunk and pads the
