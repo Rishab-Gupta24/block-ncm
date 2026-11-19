@@ -469,6 +469,19 @@ control), `gate_unf`, `gate_a1`, `gate_kl1`, `gate_all` (unfiltered + α=1 + KL 
 - **Weight 3 helps further on long-story openings: 19.5 → 18.0** (entropy 3.97), at a small NLL cost
   (1.546 vs 1.533). That is about the released model's level after the style adjustment (16.5 × 1.10 ≈ 18.1).
   On unfiltered openings it gives 16.3, the same as weight 1 + α=1 (16.1) within noise.
+- **At M=4 with a plan, weight 3 hurts NLL badly (interim, 2026-11-20 02:30).** `ourskl3_M4_G3_halo4`
+  (G=3 + halo 4, anchor 3 on all chunks), validation NLL vs the same recipe without the anchor
+  (`oursc_M4_G3_halo4`):
+
+  | step | anchored NLL (local / global) | unanchored NLL (local / global) |
+  |---|---|---|
+  | 500 | 2.231 (1.962 / 5.546) | 1.995 (1.737 / 5.177) |
+  | 1000 | 2.194 (1.941 / 5.313) | 1.960 (1.710 / 5.040) |
+
+  The reference model sees each chunk alone with no plan, so the anchor pulls the local levels toward ignoring the
+  plan and the earlier chunks. At G=0 single chunks there is nothing to ignore, which is why the gates showed almost
+  no NLL cost. The plan levels also get worse (5.31 vs 5.04), through the shared trunk. Samples (genPPL, seams) and
+  the 0.3×-on-chunks-2–4 variant are still running; whether the fluency gain survives this NLL cost is open.
 
 **The long-story subset is a different style of story.** Stories over 384 tokens (our M=4 set, 4.7% of
 TinyStories) never open with "Once upon a time" (0.0% of 2,000 sampled, vs 57.8% of all stories); they open with
