@@ -406,6 +406,24 @@ Gates (M=1, 300 steps, batch 32, lr 3e-5, corruption 0.5, same as the 20.7 gate)
 control), `gate_unf`, `gate_a1`, `gate_kl1`, `gate_all` (unfiltered + α=1 + KL 1). Code: `--level-alpha`,
 `--kl-anchor` in `experiments/train.py`; checks in `experiments/test_anchor.py` (7/7 pass). **Results pending.**
 
+**The long-story subset is a different style of story.** Stories over 384 tokens (our M=4 set, 4.7% of
+TinyStories) never open with "Once upon a time" (0.0% of 2,000 sampled, vs 57.8% of all stories); they open with
+character names ("Lily and Tom…"). The released model's samples open with "Once upon a time" 70–72% of the time,
+fine-tuned B0's 0.2% (1/512). So every fine-tuned model, and the single-chunk gate, learned the long-story style.
+
+How much of the gap that explains (real text, first 128 tokens, 512 stories each, GPT-2 Large, CPU):
+
+| real openings | genPPL | entropy |
+|---|---|---|
+| all stories | 8.50 | 3.95 |
+| long stories (> 384 tokens) | 9.33 | 3.94 |
+
+Long-story openings score 1.10× higher. Scaled the same way, the released model's 16.5 would be about 18.1 on the
+long-story style, so the style shift accounts for about 1.6 of the 4.0 points, and about 2.4 points (13%) remain as
+recipe cost. (Our all-stories figure, 8.50, is below the paper's 9.67; the selection differs: training split, every
+100th story, short stories kept whole.) `gate_unf` tests this directly by training on unfiltered openings.
+The earlier rejection below ("length filter, no EOS") tested only end-of-story tokens, not the style of the text.
+
 ### Checked and rejected
 
 - **"The 20.5 plateau comes from the length filter (no EOS in openings of long stories)."** Refuted: only 5.0%
