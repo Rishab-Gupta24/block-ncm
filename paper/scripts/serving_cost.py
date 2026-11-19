@@ -46,6 +46,11 @@ ap.add_argument("--M", type=int, default=16, help="chunks per output (output tok
 ap.add_argument("--C", type=int, default=128, help="tokens per chunk")
 ap.add_argument("--G", type=int, default=3, help="global levels in Block-NCM")
 ap.add_argument("--prefix", type=int, default=1)
+ap.add_argument("--halo", type=int, default=0, help="Block-NCM halo width h: each local level also runs 2h "
+                                                    "neighbour positions per chunk (computed, not predicted)")
+ap.add_argument("--power", type=float, default=700.0, help="GPU board power in W for the energy estimate "
+                                                           "(H100 SXM TDP 700 W; an upper bound: memory-bound "
+                                                           "passes draw less)")
 ap.add_argument("--batches", default="1,2,4,8,16,32,64,128,256")
 ap.add_argument("--Ms", default="1,2,4,8,16,32,64", help="M values for the latency sweep at batch 1")
 a = ap.parse_args()
@@ -83,7 +88,8 @@ def ncm(B, M, variant):
         elif variant == "B2" or i < a.G:
             t += t_pass(B * M * l, p + M * l)           # global level, all chunks
         else:
-            t += t_pass(B * M * l, p + plan + l)        # local level, cached plan
+            lh = l + 2 * a.halo                         # local level, cached plan (+ halo neighbours)
+            t += t_pass(B * M * lh, p + plan + lh)
     return t
 
 
@@ -95,7 +101,8 @@ N = a.M * a.C
 B_star = (W / BW) * F / (2 * a.P)
 print(f"# Serving-cost roofline: P={a.P:.2g}, L={a.L}, d={a.d}, kv_ratio={a.kv_ratio}")
 print(f"# hardware: peak {a.peak:.3g} FLOP/s x mfu {a.mfu} = {F:.3g};  BW {a.bw:.3g} B/s x mbu {a.mbu} = {BW:.3g}")
-print(f"# price ${a.price}/GPU-h (assumption); output {N} tokens = M {a.M} x C {a.C}; Block-NCM G={a.G}")
+print(f"# price ${a.price}/GPU-h (assumption); output {N} tokens = M {a.M} x C {a.C}; Block-NCM G={a.G}, "
+      f"halo {a.halo}; power {a.power:.0f} W")
 print(f"# weight-load time W/BW = {W / BW * 1e3:.2f} ms; dense compute 2P/F = {2 * a.P / F * 1e3:.4f} ms/position")
 print(f"# AR memory->compute crossover B* = {B_star:.0f};  NCM positions per token rho = {rho:.2f};  "
       f"predicted AR-cheaper-than-NCM batch ~ B*/rho = {B_star / rho:.0f}\n")
@@ -125,3 +132,10 @@ for M in [int(x) for x in a.Ms.split(",")]:
     t_ar, t_b1, t_b2, t_o = ar(1, M * a.C), ncm(1, M, "B1"), ncm(1, M, "B2"), ncm(1, M, "Ours")
     print(f"| {M} | {M * a.C} | {t_ar:.3f} | {t_b1:.3f} | {t_b2:.3f} | {t_o:.3f} | {t_ar / t_o:.1f}x | "
           f"{t_b1 / t_o:.2f}x | {t_b2 / t_o:.2f}x |")
+
+print("\n## Energy (kWh per 1M output tokens = GPU-seconds x power) and Block-NCM savings\n")
+print("| batch | AR kWh | B2 kWh | Block-NCM kWh | saving vs AR | saving vs B2 |")
+print("|---|---|---|---|---|---|")
+for B in [int(x) for x in a.batches.split(",")]:
+    e = [t / (B * N) * 1e6 * a.power / 3.6e6 for t in (ar(B, N), ncm(B, a.M, "B2"), ncm(B, a.M, "Ours"))]
+    print(f"| {B} | {e[0]:.3f} | {e[1]:.3f} | {e[2]:.3f} | {1 - e[2] / e[0]:+.0%} | {1 - e[2] / e[1]:+.0%} |")
