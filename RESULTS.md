@@ -59,6 +59,38 @@ What this shows:
   jump. Measured separately, cutting *depth* on these levels failed (Milestone 4). Level-skipping at full depth
   remains open and is the cheaper idea to test next.
 
+## 2026-11-19: Milestone 5b, halo widths and halo + larger plans (Kaggle, 2× T4, fp16, one seed)
+
+Same recipe as Milestone 5 (corruption 0.5, lr 3e-5, 1,500 steps, `--fast`), trained on Kaggle (`kaggle/run_halo.sh`,
+Version 6, all stages passed). genPPL: GPT-2 Large, 2 seeds × 256 samples. The local columns are from Milestone 5.
+
+| | Ours G=3 + halo 2 | Ours G=3 + halo 4 (local) | Ours G=3 + halo 8 | **Ours G=5 + halo 4** | Ours G=6 + halo 4 | B2 (local) |
+|---|---|---|---|---|---|---|
+| genPPL, M=4 | 21.4 | 21.0 | 20.4 | **19.1** | 18.7 | 19.0 |
+| boundary / inner ratio, M=4 | 1.22 | 1.19 | 1.17 | **1.14** | 1.12 | 1.17 |
+| entropy, M=4 | 4.39 | 4.41 | 4.39 | 4.35 | 4.31 | 4.36 |
+| **genPPL, M=6** (trained on M=4) | 21.1 | 21.5 | 20.4 | **20.0** | 23.6 | 33.5 |
+| boundary / inner ratio, M=6 | 1.19 | 1.19 | 1.21 | **1.15** | 1.14 | 1.15 |
+| genPPL sd over 2 seeds, M=6 | 0.03 | 0.3 | 0.36 | 0.17 | 0.32 | 2.3 |
+| NLL, Kaggle encoding (non-padding) | 1.6002 | — | 1.5997 | **1.5976** | 1.6114 | — |
+
+What this shows:
+- **G=5 + halo 4 is the best model overall.** At the training length it ties B2 (19.1 vs 19.0) with better seams
+  (1.14 vs 1.17), and at M=6 it is the best of all runs (20.0 vs B2's 33.5). Halo also fixes G=5's extrapolation:
+  without halo G=5 went 20.0 → 23.8 at M=6; with halo it goes 19.1 → 20.0.
+- **G=6 + halo 4 generates best at M=4 (18.7, below B2) but still degrades at M=6 (23.6).** Six global levels
+  learn the training length even with halo. Level 6 NLL is again worse when it is global (1.79 vs 1.59–1.61).
+- **Wider halos help a little:** h = 2 / 4 / 8 give genPPL 21.4 / 21.0 / 20.4 and boundary ratio 1.22 / 1.19 / 1.17
+  at G=3. h=8 costs about 2× the halo compute of h=4 (about 20% of local-level positions instead of 10%).
+- **NLL:** among the Kaggle runs G=5 + halo 4 is best (−0.0138 vs G=6 + halo 4, 95% CI [−0.0144, −0.0133], better on
+  93% of docs); halo 8 vs halo 2 is a tie (1.5997 vs 1.6002).
+- **Kaggle NLL is not comparable with local NLL.** The released model itself scores 1.9558 on the Kaggle encoding and
+  2.0966 on the local one (non-padding), so the two machines' code files differ, most likely through quantizer
+  precision during encoding (F4: the bf16 quantizer loses precision). genPPL is measured on decoded text, so it is
+  comparable across machines; NLL is compared only within a machine. **To check:** encode the local data with an
+  fp32 quantizer and compare.
+- One seed throughout. The G=5 + halo 4 vs B2 tie at M=4 is within noise; the M=6 gap (20.0 vs 33.5) is not.
+
 ## 2026-11-19: Milestone 5, halo attention and the G sweep (same recipe and data as Milestone 3b, one seed)
 
 All runs: corruption 0.5, lr 3e-5, 1,500 steps, KV-cached plan (`--fast`). NLL from `nll_breakdown.py` on all
