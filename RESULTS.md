@@ -91,6 +91,48 @@ A halo of h=8 costs about 20% because halo positions are processed as queries; h
 would cost less. Reducing positions per token (shallower fine levels, fewer levels) is the only lever that moves
 the cost crossover with AR.
 
+More scenarios (same model): a **0.25× refiner on the local levels** gives 1.53 positions per token,
+$0.038 per 1M tokens at batch 256 against AR's $0.033, and moves the crossover from batch 34 to 177.
+
+**Batch-1 streaming, 2,048 tokens**
+
+| method | time to first token | time to last token |
+|---|---|---|
+| AR (GQA) | 5 ms | 10.75 s |
+| AR + speculative decoding (0.5B draft, 4 drafted tokens, acceptance 0.8) | 5 ms | 4.11 s |
+| B1 chunks in sequence | 57 ms | 0.92 s |
+| Block-NCM G=3 | 369 ms | 0.37 s |
+| **Super-block streaming** (Block-NCM over 4-chunk blocks, blocks in sequence) | **101 ms** | **0.40 s** |
+
+Super-block streaming removes most of the no-streaming drawback: first output in 0.1 s, only 9% slower in
+total. AR with speculative decoding is still about 11× slower than Block-NCM.
+
+### Checked and rejected
+
+- **"The 20.5 plateau comes from the length filter (no EOS in openings of long stories)."** Refuted: only 5.0%
+  of all stories end within 128 tokens, and the released model's own samples almost never end (≤ 0.4% contain
+  EOS, mean length 128), the same as every fine-tuned run.
+- **"Train local levels on self-sampled plans (on-policy corruption)."** Not adopted: with residual
+  quantization, the fine codes are residuals of the *true* coarse codes. A coherent but different sampled
+  plan makes the clean fine targets unpredictable, which teaches the local levels to ignore the plan, the
+  opposite of the goal. Uniform corruption is visibly noise and does not have this problem.
+
+### Built: `blockncm/fast.py` (`FastChunkedNCM`, same weights and state_dict as ChunkedNCM)
+
+- **KV-cached plan**, exact: the prefix and plan keys/values are computed once and reused by every local
+  level, in training and generation. Uses a functional copy of the released block (`block_fwd`) that takes
+  past K/V explicitly, so it works with gradient checkpointing.
+- **Halo attention** (`--halo h`): local levels also see h inputs of each neighbouring chunk (positions
+  −h…−1 and l…l+h−1; edges masked).
+- **Plan search** (`sample_eval.py --n-plans n`): sample n plans, keep the most likely, run local levels once.
+  Likelihood selection can lower diversity, so entropy must be reported alongside genPPL.
+- Checks (`experiments/test_fast.py`, CPU): loss equal to ChunkedNCM for G ∈ {0, 1, 3, 6, 11} (max
+  difference 1.2e-6); halo with M=1 changes nothing; generation gives identical codes under the same seed
+  (G = 0, 3, 11); plan search and halo generation run. **The untrained halo already lowers the released
+  model's M=4 loss** (2.456 vs 2.508, G=3).
+- Flags: `train.py --fast / --halo`, `sample_eval.py --fast / --halo / --n-plans`; `nll_breakdown.py` now
+  scores with FastChunkedNCM (exact at halo 0, and applies each run's halo).
+
 ### RTX 5050 time budget for the next runs (from measured s/step)
 
 | run | uncached plan | KV-cached plan |

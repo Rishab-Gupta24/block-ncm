@@ -44,6 +44,8 @@ ap.add_argument("--corrupt-mean", type=float, default=0.0,
 ap.add_argument("--corrupt-span", type=float, default=0.5,
                 help="rate falls linearly from mean+span/2 (level 0) to mean-span/2 (level K-1)")
 ap.add_argument("--keep-ckpts", action="store_true", help="also save model_step{N}.pt at every evaluation")
+ap.add_argument("--fast", action="store_true", help="FastChunkedNCM: KV-cached plan (exact, faster)")
+ap.add_argument("--halo", type=int, default=0, help="halo attention width for local levels (implies --fast)")
 ap.add_argument("--min-len", type=int, default=0,
                 help="keep only documents with at least this many tokens (needs *_len.npy from prepare_chunks)")
 a = ap.parse_args()
@@ -55,7 +57,11 @@ os.makedirs(run_dir, exist_ok=True)
 json.dump(vars(a), open(os.path.join(run_dir, "args.json"), "w"), indent=2)
 
 cfg, tk, net, sd = load_released(a.ckpt)
-model = ChunkedNCM(net, tk, sd).cuda()
+if a.fast or a.halo:
+    from blockncm.fast import FastChunkedNCM
+    model = FastChunkedNCM(net, tk, sd, halo=a.halo).cuda()
+else:
+    model = ChunkedNCM(net, tk, sd).cuda()
 model.grad_ckpt = a.grad_ckpt
 if a.corrupt_mean > 0:
     model.corrupt = ChunkedNCM.linear_corruption(model.K, a.corrupt_mean, a.corrupt_span)

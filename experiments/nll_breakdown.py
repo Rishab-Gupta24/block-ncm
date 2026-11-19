@@ -38,7 +38,8 @@ ap.add_argument("--out", default="")
 a = ap.parse_args()
 
 cfg, tk, net, sd = load_released(a.ckpt)
-model = ChunkedNCM(net, tk, sd).cuda().eval()
+from blockncm.fast import FastChunkedNCM  # noqa: E402  (exactly ChunkedNCM at halo 0; also scores halo runs)
+model = FastChunkedNCM(net, tk, sd).cuda().eval()
 base_state = {k: v.clone() for k, v in model.state_dict().items()}
 val = np.load(os.path.join(os.path.expanduser(a.chunked), f"val_M{a.M}.npy"))
 C, K, lt, PAD = model.chunk_len, model.K, model.lt, model.pad
@@ -93,6 +94,7 @@ for spec in a.runs:
         st = torch.load(os.path.join(os.path.expanduser(a.runs_dir), name, "model.pt"), map_location="cpu",
                         weights_only=False)
         model.load_state_dict(st["model"], strict=True)
+    model.halo = st.get("args", {}).get("halo", 0) if name != "released" else 0
     nll = [[] for _ in range(K)]
     with torch.no_grad():
         for s in range(0, len(val), a.bs):

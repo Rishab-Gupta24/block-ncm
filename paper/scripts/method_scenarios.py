@@ -69,6 +69,7 @@ scen = [
     ("G=3 + half-depth levels 7-11", dict(levels=TS, G=3, depth=half_fine)),
     ("G=2 + 6 levels [8..128]", dict(levels=few, G=2)),
     ("G=2 + 6 levels + half-depth last 3", dict(levels=few, G=2, depth=[1, 1, 1, .5, .5, .5])),
+    ("G=3 + 0.25x refiner on local levels", dict(levels=TS, G=3, depth=[1.0] * 3 + [0.25] * 8)),
     ("B2 fully global", dict(levels=TS, G=3, variant="B2")),
     ("B1 chunks in sequence", dict(levels=TS, G=3, variant="B1")),
 ]
@@ -91,3 +92,33 @@ for name, kw in scen:
     rp = rho_eff(kw["levels"], kw.get("depth"), kw.get("halo", 0), kw["G"])
     print(f"| {name} | {rp:.2f} | {t1:.3f} s | {ar1 / t1:.0f}x | {t8k:.2f} s | {c1:.3f} | {c256:.3f} | "
           f"{cross if cross else '>512'} |")
+
+
+# ---------------------------------------------------------------- streaming and speculative decoding (batch 1)
+def ar_spec(N, P_draft=0.5e9, gamma=4, alpha=0.8):
+    """AR + speculative decoding at batch 1: gamma draft passes (memory-bound draft model) + one verification
+    pass of gamma+1 positions per round; expected accepted tokens per round (1 - alpha^(gamma+1)) / (1 - alpha)."""
+    acc = (1 - alpha ** (gamma + 1)) / (1 - alpha)
+    t_draft = gamma * (2 * P_draft / BW)
+    rounds, t, n = 0, 0.0, 0
+    while n < N:
+        t += t_draft + t_pass(gamma + 1, n + gamma + 1, 1.0, n * 2 * a.L * a.d * a.kv_ratio * 2)
+        n += acc
+        rounds += 1
+    return t
+
+
+print("\n## Batch-1 streaming: time to first token (TTFT) and to last token (TTLT), 2,048 tokens\n")
+print("| method | TTFT | TTLT | streams? |\n|---|---|---|---|")
+t_ar_tok = t_pass(1, 1, 1.0)
+rows = [
+    ("AR (GQA)", t_ar_tok, ar(1, N), "per token"),
+    ("AR + speculative decoding (0.5B draft, gamma 4, acceptance 0.8)", t_ar_tok, ar_spec(N), "per round"),
+    ("B1 chunks in sequence", ncm(1, 1, TS, 3), ncm(1, M, TS, 3, variant="B1"), "per chunk (128 tok)"),
+    ("Block-NCM G=3", ncm(1, M, TS, 3), ncm(1, M, TS, 3), "no: all at once"),
+    ("Super-block streaming: Block-NCM on 4-chunk blocks, in sequence", ncm(1, 4, TS, 3), 4 * ncm(1, 4, TS, 3),
+     "per super-block (512 tok)"),
+]
+for name, ttft, ttlt, s in rows:
+    print(f"| {name} | {ttft * 1e3:.0f} ms | {ttlt:.2f} s | {s} |")
+print("\n(prefill and the super-block's conditioning prefix are not modelled)")

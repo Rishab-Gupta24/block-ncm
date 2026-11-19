@@ -38,14 +38,24 @@ ap.add_argument("--temp", type=float, default=1.0)
 ap.add_argument("--window", type=int, default=32)
 ap.add_argument("--ref-model", default="gpt2-large")
 ap.add_argument("--score-bs", type=int, default=4, help="GPT-2 Large scoring batch (8 GB GPU: 4)")
+ap.add_argument("--fast", action="store_true", help="FastChunkedNCM generation (KV-cached plan; same codes)")
+ap.add_argument("--halo", type=int, default=None, help="halo width (default: the run's training value)")
+ap.add_argument("--n-plans", type=int, default=1, help="plan search: candidates per document (needs 0<G<K)")
 ap.add_argument("--out", default="")
 a = ap.parse_args()
 
 cfg, tk, net, sd = load_released(a.ckpt)
-model = ChunkedNCM(net, tk, sd).cuda().eval()
-if a.run:
-    st = torch.load(os.path.join(os.path.expanduser(a.run), "model.pt"), map_location="cpu", weights_only=False)
+st = torch.load(os.path.join(os.path.expanduser(a.run), "model.pt"), map_location="cpu", weights_only=False) \
+    if a.run else None
+halo = a.halo if a.halo is not None else (st["args"].get("halo", 0) if st else 0)
+if a.fast or halo or a.n_plans > 1:
+    from blockncm.fast import FastChunkedNCM
+    model = FastChunkedNCM(net, tk, sd, halo=halo).cuda().eval()
+else:
+    model = ChunkedNCM(net, tk, sd).cuda().eval()
+if st:
     model.load_state_dict(st["model"], strict=True)
+gen_kw = {"n_plans": a.n_plans} if a.n_plans > 1 else {}
 C = model.chunk_len
 EOS, PAD = model.eos, model.pad
 
@@ -57,7 +67,7 @@ for seed in seeds:
         B = min(a.bs, a.n - s)
         torch.cuda.synchronize(); t0 = time.time()
         with torch.autocast("cuda", dtype=torch.bfloat16):
-            codes = model.generate(B, a.M, a.G, temperature=a.temp)
+            codes = model.generate(B, a.M, a.G, temperature=a.temp, **gen_kw)
         torch.cuda.synchronize(); lat.append((time.time() - t0, B))
         flat = codes.reshape(B * a.M, -1)
         _, zl = model.vq.idx_to_zhats(flat, return_zlevels=True)
@@ -100,7 +110,9 @@ for _, ch in samples:
             iwin.append(dec(clean(flat[mid - W:mid + W])))
 
 out = a.out or os.path.join(os.path.expanduser(a.run) if a.run else os.path.expanduser("~/ncm/runs/zeroshot"),
-                            f"eval_M{a.M}_G{a.G}_t{a.temp}.json")
+                            f"eval_M{a.M}_G{a.G}_t{a.temp}"
+                            + (f"_plans{a.n_plans}" if a.n_plans > 1 else "")
+                            + (f"_halo{a.halo}" if a.halo is not None else "") + ".json")
 os.makedirs(os.path.dirname(out), exist_ok=True)
 json.dump({"seeds": seeds, "samples": samples, "latency": lat}, open(out.replace(".json", "_samples.json"), "w"))
 
