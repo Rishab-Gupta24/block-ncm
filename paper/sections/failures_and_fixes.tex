@@ -128,8 +128,8 @@ seams tie (boundary ratio 1.14 vs 1.13). $G{=}6$ with halo generates best at $M{
 
 \subsection{B2: fully global ($G{=}11$)}
 B2 generates best at $M{=}4$ but has the \emph{worst} NLL of all runs (1.7780), losing on levels 6--11 and on
-chunk 4. More importantly, it \textbf{collapses beyond the training length}: genPPL 19.0$\to$33.5 at $M{=}6$, with
-high seed variance (sd 2.3). Global attention across all chunks appears to fit the training length. This is the
+chunk 4. More importantly, it \textbf{collapses beyond the training length}: genPPL 19.0$\to$33.5 at $M{=}6$, and
+18.4$\to$31.0 in a second training seed, with high sampling variance (sd 2.3 and 1.2). Global attention across all chunks appears to fit the training length. This is the
 baseline's failure, not ours, and it motivates Block-NCM: B2's advantage exists only at the length it was
 trained on.
 
