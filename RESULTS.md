@@ -155,6 +155,23 @@ It targets exactly the deficit measured here.
   text, so this schedule is our reconstruction of "shifted linear, mean 0.50". The gate before more M=4 runs:
   300 openings-only steps must keep single-chunk genPPL near 16.5.
 
+#### Gate: 300 openings-only steps (M=1, batch 32), single-chunk generation (seed 42, 256 samples)
+
+| recipe | openings NLL, step 150 / 300 | genPPL | entropy |
+|---|---|---|---|
+| released, no training | 1.551 | **16.5** | 3.98 |
+| lr 1e-4, clean | 1.327 / 1.272 | 41.0 | 3.99 |
+| lr 1e-5, clean | 1.397 / 1.381 | 34.1 | 3.98 |
+| lr 1e-4, corruption mean 0.5 (0.75 → 0.25) | 1.579 / 1.554 | **22.2** | 3.92 |
+
+- **The damage is in the recipe, not the data:** clean training on the released model's own kind of data
+  (openings) breaks generation, and a 10× lower learning rate only slows it.
+- **Corruption fixes most of it:** it keeps NLL at the released calibration (1.554 vs 1.551) and recovers
+  most of the generation quality, but has not yet passed the gate. The remaining samples are fluent with some
+  repetition. Testing next: a lighter schedule (mean 0.25), lr 3e-5, and a flat 0.5 schedule.
+- Footnote: released zero-shot at M=4 (14.4) scores *below* single-chunk (16.5). That isn't a bug: four fluent
+  openings give GPT-2 Large longer context, which lowers perplexity more than the seams raise it.
+
 - Caveat: the padding mask comes from token windows rebuilt with `prepare_chunks.py`'s selection.
   Re-encoding the first 4 docs reproduces 91% of the stored codes, not 100%. That could be encoder numerics
   (different batch size), or a document mismatch. To check: compare per document; a mismatched document would
