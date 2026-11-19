@@ -404,7 +404,21 @@ fine-tune with weight decay 0.01 and peak lr 3e-5.
 
 Gates (M=1, 300 steps, batch 32, lr 3e-5, corruption 0.5, same as the 20.7 gate): `gate_base` (repeat, noise
 control), `gate_unf`, `gate_a1`, `gate_kl1`, `gate_all` (unfiltered + α=1 + KL 1). Code: `--level-alpha`,
-`--kl-anchor` in `experiments/train.py`; checks in `experiments/test_anchor.py` (7/7 pass). **Results pending.**
+`--kl-anchor` in `experiments/train.py`; checks in `experiments/test_anchor.py` (7/7 pass).
+
+| gate (300 steps, single chunk, seed-42 samples) | openings NLL, step 300 | genPPL | entropy |
+|---|---|---|---|
+| released, no training | 1.551 | 16.5 | 3.98 |
+| `gate_base` (repeat of the 20.7 recipe) | 1.533 | 21.0 | 3.91 |
+| `gate_a1` (equal weight per level, α=1) | 1.533 | 20.9 | 3.91 |
+| **`gate_kl1` (KL anchor to the released model, weight 1)** | 1.537 | **19.5** | **3.94** |
+| `gate_unf`, `gate_all` | — | encoding crashed (shared GPU); re-queued | |
+
+- **Level weighting does nothing** (20.9 vs 21.0), as the paper's α ablation predicted.
+- **The KL anchor helps: 21.0 → 19.5, and entropy recovers 3.91 → 3.94**, at almost no NLL cost (1.537 vs 1.533).
+  It closes about 1.5 of the 4.5 points. With the style shift (about 1.6 points, below), about 1.4 points remain
+  unexplained. Repeat-to-repeat noise is about 0.3 (20.7 vs 21.0).
+- Queued: weight 3 (`gate_kl3`), unfiltered openings alone and combined (`gate_unf`, `gate_all`, `gate_unf_kl3`).
 
 **The long-story subset is a different style of story.** Stories over 384 tokens (our M=4 set, 4.7% of
 TinyStories) never open with "Once upon a time" (0.0% of 2,000 sampled, vs 57.8% of all stories); they open with
