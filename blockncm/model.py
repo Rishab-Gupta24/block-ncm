@@ -70,7 +70,34 @@ class ChunkedNCM(nn.Module):
             uni = sd["inference"].get("level0_unigram")
         self.register_buffer("l0_unigram", uni.float() if uni is not None else None, persistent=False)
         self.grad_ckpt = False
+        # conditioning corruption (NCM paper Sec. 3.4 / App. F.3): during training, replace input codes of
+        # level j with uniform codes from the same codebook with probability corrupt[j]; targets stay clean.
+        self.corrupt = None
         self._cache = {}
+
+    @staticmethod
+    def linear_corruption(n_levels, mean=0.5, span=0.5):
+        """Linearly decreasing per-level rates with the given mean: mean+span/2 (level 0) .. mean-span/2."""
+        if n_levels == 1:
+            return [mean]
+        return [min(1.0, max(0.0, mean + span * (0.5 - j / (n_levels - 1)))) for j in range(n_levels)]
+
+    def _corrupt_inputs(self, flat):
+        """flat: (N, L) codes. Returns a copy whose conditioning codes are corrupted (training only)."""
+        if not (self.training and self.corrupt):
+            return flat
+        out = flat.clone()
+        starts = [0] + [self.l0 + o for o in self.offsets]  # start of level 0 and of target levels 1..K
+        lens = [self.l0] + self.lt
+        for j, p in enumerate(self.corrupt):  # level j conditions level j+1; the finest level never does
+            if p <= 0 or j >= self.K:
+                continue
+            s, l = starts[j], lens[j]
+            n_codes = self.vq.embeddings[j].weight.shape[0]
+            hit = torch.rand(out.shape[0], l, device=out.device) < p
+            rnd = torch.randint(0, n_codes, (out.shape[0], l), device=out.device)
+            out[:, s:s + l] = torch.where(hit, rnd, out[:, s:s + l])
+        return out
 
     @property
     def vqvae(self):
@@ -156,10 +183,10 @@ class ChunkedNCM(nn.Module):
         dev = codes.device
         flat = codes.reshape(B * M, L)
         with torch.no_grad():
-            X = self.vq.idx_to_ncm_input(flat)
+            X = self.vq.idx_to_ncm_input(self._corrupt_inputs(flat))
         D = X.shape[-1]
         X = X.view(B, M, -1, D)
-        Y = flat[:, self.l0:].view(B, M, -1)
+        Y = flat[:, self.l0:].view(B, M, -1)  # clean targets
         pre = self._prefix_emb(B, dev)
         emb = []
         for t, l in enumerate(self.lt):
@@ -213,7 +240,7 @@ class ChunkedNCM(nn.Module):
         dev = codes.device
         flat = codes.reshape(B * M, L)
         with torch.no_grad():
-            X = self.vq.idx_to_ncm_input(flat)  # (B*M, T, D) next-level inputs
+            X = self.vq.idx_to_ncm_input(self._corrupt_inputs(flat))  # (B*M, T, D) next-level inputs
         D = X.shape[-1]
         X = X.view(B, M, -1, D)
         Y = flat[:, self.l0:].view(B, M, -1)

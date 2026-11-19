@@ -86,9 +86,13 @@ results, doc_nll = {}, {}
 for spec in a.runs:
     name, G = spec.rsplit(":", 1)
     G = int(G)
-    st = torch.load(os.path.join(os.path.expanduser(a.runs_dir), name, "model.pt"), map_location="cpu",
-                    weights_only=False)
-    model.load_state_dict(st["model"], strict=True)
+    if name == "released":  # the released weights, zero-shot
+        st = {"step": 0}
+        model.load_state_dict(base_state, strict=True)
+    else:
+        st = torch.load(os.path.join(os.path.expanduser(a.runs_dir), name, "model.pt"), map_location="cpu",
+                        weights_only=False)
+        model.load_state_dict(st["model"], strict=True)
     nll = [[] for _ in range(K)]
     with torch.no_grad():
         for s in range(0, len(val), a.bs):

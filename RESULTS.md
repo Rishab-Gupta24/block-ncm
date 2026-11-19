@@ -84,6 +84,11 @@ What this shows:
   The G ∈ {4, 5, 6} ablation is the obvious next run.
 ### Generation, step 1500 (`experiments/sample_eval.py`, 2 seeds × 256 samples, temperature 1.0)
 
+> **Warning: these generation numbers measure damage from fine-tuning, not Block-NCM.** Fine-tuned B0 also
+> degrades *single-chunk* generation from genPPL 16.5 (released) to 47.7 (table below), with no chunking
+> involved. Sampling settings match the released `evaluate.py` (temperature 1.0, top-k 0, top-p 1.0). The NLL
+> results above are unaffected. Cause under investigation; see "Fine-tuning damages free generation" below.
+
 | | B0 | **Ours (G=3)** | B2 | Ours: share of B0→B2 gap closed |
 |---|---|---|---|---|
 | genPPL, GPT-2 Large (mean ± sd over seeds) | 53.5 ± 0.4 | **51.7 ± 0.8** | 47.8 ± 0.8 | 31% |
@@ -113,6 +118,42 @@ Candidate fix for the seams: **halo attention.** Let local level t also attend t
 nearest w positions of the neighbouring chunks. Level-t inputs come from levels < t, which are already
 generated, so this adds no sequential passes. Its cost is O(l·(l + 2w)) instead of B2's O((M·l)²).
 It targets exactly the deficit measured here.
+
+### Fine-tuning damages free generation (diagnosis in progress)
+
+| | genPPL | inner-window genPPL | boundary / inner |
+|---|---|---|---|
+| real TinyStories, first 512 tokens, 512 val docs (`experiments/real_text_ppl.py`) | **6.1** | 15.4 | **1.008** |
+| released model, single 128-token samples (seed 42) | 16.5 | | |
+| fine-tuned B0, single 128-token samples (seed 42) | **47.7** | | |
+| released model zero-shot, M=4 (four independent openings) | 14.4 | 25.3 | 1.25 |
+| fine-tuned B0 / Ours / B2, M=4 | 53.5 / 51.7 / 47.8 | 76–80 | 1.26 / 1.18 / 1.07 |
+
+- Ruled out: the training inputs (`idx_to_ncm_input`) equal the generation inputs
+  (`get_next_autoregressive_input`) bit for bit at every level, in train and eval mode. Fine-tuning leaves the
+  tokenizer's quantizer unchanged (0 of 88 tensors differ). The sampling settings match `evaluate.py`.
+- Symptom: fluent sentences with wrong words ("there was a that threat"). That is the signature of parallel
+  sampling within a level when per-position predictions get flatter.
+- The released generator's training code is not public (the repo has evaluation only), so any training-time
+  trick it relied on, such as input noise, is unknown.
+- Real text sets the target boundary ratio at 1.008: seams are invisible in real stories.
+- **Likely cause: missing conditioning corruption.** The NCM paper (arXiv:2610.14162, Sec. 3.4, App. F.3)
+  trains the generator with "a fraction of conditioning codes replaced by other codes from the same level's
+  codebook" at "a linearly decreasing corruption rate across levels". The selected recipe has mean rate 0.50
+  and gives TinyStories genPPL 15.41; targets stay clean. Our fine-tuning used clean inputs. The paper's
+  generator recipe also differs in scale: batch 2,048, peak lr 3e-4 (floor 3e-5), weight decay 0.1,
+  50k updates. Ours: batch 32 chunks, lr 1e-4, weight decay 0.01.
+- **Evidence:** on story openings (chunk 1, clean teacher forcing), fine-tuned B0 beats the released model
+  by a wide margin, 1.179 vs 1.558 NLL (paired over 1,228 docs, B0 better on 100%), yet generates 3× worse.
+  A generator trained on corrupted inputs leans less on its conditioning: worse on clean inputs, robust to
+  its own sampling errors. Clean fine-tuning reverses both.
+- **Consequence:** NLL from our recipe cannot be compared with the released model, only between runs that
+  share a recipe. The M=4 NLL comparison (B0 / Ours / B2) is internally consistent, but measures clean
+  teacher-forced prediction, not generation.
+- Fix being tested: `train.py --corrupt-mean 0.5` (uniform code replacement, linear 0.75 → 0.25 over
+  conditioning levels 0..10, finest level never an input). The exact per-level rates are not in the paper's
+  text, so this schedule is our reconstruction of "shifted linear, mean 0.50". The gate before more M=4 runs:
+  300 openings-only steps must keep single-chunk genPPL near 16.5.
 
 - Caveat: the padding mask comes from token windows rebuilt with `prepare_chunks.py`'s selection.
   Re-encoding the first 4 docs reproduces 91% of the stored codes, not 100%. That could be encoder numerics

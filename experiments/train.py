@@ -39,6 +39,10 @@ ap.add_argument("--val-docs", type=int, default=512)
 ap.add_argument("--grad-ckpt", action="store_true")
 ap.add_argument("--seed", type=int, default=0)
 ap.add_argument("--time-limit", type=float, default=0, help="stop after this many minutes (0 = none)")
+ap.add_argument("--corrupt-mean", type=float, default=0.0,
+                help="conditioning corruption, mean replacement rate over levels (NCM paper selected 0.5)")
+ap.add_argument("--corrupt-span", type=float, default=0.5,
+                help="rate falls linearly from mean+span/2 (level 0) to mean-span/2 (level K-1)")
 ap.add_argument("--min-len", type=int, default=0,
                 help="keep only documents with at least this many tokens (needs *_len.npy from prepare_chunks)")
 a = ap.parse_args()
@@ -52,6 +56,9 @@ json.dump(vars(a), open(os.path.join(run_dir, "args.json"), "w"), indent=2)
 cfg, tk, net, sd = load_released(a.ckpt)
 model = ChunkedNCM(net, tk, sd).cuda()
 model.grad_ckpt = a.grad_ckpt
+if a.corrupt_mean > 0:
+    model.corrupt = ChunkedNCM.linear_corruption(model.K, a.corrupt_mean, a.corrupt_span)
+    print("conditioning corruption per level:", [round(p, 3) for p in model.corrupt], flush=True)
 assert 0 <= a.G <= model.K, f"G must be in [0, {model.K}]"
 
 chunked = os.path.expanduser(a.chunked)
