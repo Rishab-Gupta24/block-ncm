@@ -72,16 +72,22 @@ end-of-text for 400 AR tokens (457 tokens on average, our samples: about 425).
 | **128 tokens** | | | | | |
 | real text (NCM paper) | — | 9.67 | 3.96 | — | — |
 | AR 88.6M (NCM paper, Table 8) | 128 | 8.89 | 4.01 | — | — |
-| AR TinyStories-33M (ours) | 128 | 9.68 | 3.98 | — | 0.039 |
-| base NCM (our rerun) | 12 | 16.38 | 3.97 | — | — |
+| AR TinyStories-33M (ours) | ≈ 129 | 9.68 | 3.98 | — | 0.039 |
+| base NCM (our rerun) | 11 † | 16.38 | 3.97 | — | — |
 | **512 tokens** | | | | | |
 | real text | — | 6.1 | 4.46 | 1.01 | — |
-| AR TinyStories-33M, natural length (217 tokens) | ≤ 784 | 9.17 | 4.21 | 1.12 | 0.17 |
-| AR TinyStories-33M, length-matched (457 tokens) | ≤ 784 | 9.93 | 4.61 | 1.04 | 0.24 |
+| AR TinyStories-33M, natural length (217 tokens) | ≈ 219 | 9.17 | 4.21 | 1.12 | 0.17 |
+| AR TinyStories-33M, length-matched (457 tokens) | ≈ 462 | 9.93 | 4.61 | 1.04 | 0.24 |
 | base NCM, 4 independent chunks | 11 | 14.4 | — | 1.25 | — |
 | B2 (all global) | 11 | 19.0 | 4.36 | 1.17 | — |
 | **Ours G=5 + halo 4** | **11** | **19.1** | 4.35 | **1.14** | 0.08 (T4) |
 | **768 tokens:** Ours G=5 + halo 4 / B2 | 11 | 20.0 / 33.5 | | 1.15 / 1.15 | |
+
+AR sequential steps are the AR model's own tokens: 1.011 GPT-Neo tokens per BPE-8192 token on TinyStories (500 real
+stories, sd 0.023), so 457 BPE tokens ≈ 462 steps. The script's `max_new_tokens` cap (784) only bounds generation;
+samples are then cut to 512 BPE tokens, well inside TinyStories-33M's 2,048-position context.
+† The NCM paper counts 12 function evaluations at 128 tokens. Level 0 (1 code) is drawn from a stored unigram table,
+not a transformer pass, so it is 11 transformer passes, as in the 512-token rows.
 
 What this shows:
 - **TinyStories-33M is a fair AR stand-in:** at 128 tokens it scores 9.68 against 8.89 for the paper's 88.6M AR and
@@ -91,7 +97,7 @@ What this shows:
   (the gap the gates are testing). Block-NCM's contribution is making NCM work at length, not matching AR quality.
 - **The seam metric has a floor above 1.0 on generated text:** AR has no seams at all and scores 1.04
   (length-matched) and 1.12 (natural length). So our 1.14 is close to that floor, and B0's 1.52 is clearly not.
-- **Speed:** 11 sequential passes vs up to 784 for AR. Measured latency favours Block-NCM (0.08 s/sample on a T4 at
+- **Speed:** 11 sequential passes vs about 462 for AR at matched length (one per token). Measured latency favours Block-NCM (0.08 s/sample on a T4 at
   batch 32 vs 0.24 s for AR on the RTX 5050 at batch 64) even though the AR model is smaller, but the AR side uses
   unoptimised Hugging Face `generate`, so this is indicative only. The 7B cost model (26.5× faster at batch 1, AR
   cheaper from batch 32) remains the cost estimate.
