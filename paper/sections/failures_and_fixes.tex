@@ -121,9 +121,9 @@ changes (unfiltered openings, per-level loss weighting, a KL anchor to the relea
 More global levels improve generation at the training length: genPPL 20.0 ($G{=}5$) and 19.6 ($G{=}6$) vs 19.0
 for B2. But they \emph{fail to extrapolate}. At $M{=}6$ (trained on $M{=}4$), $G{=}6$ degrades to 30.7 and
 $G{=}5$ to 23.8, while $G{=}3$ holds (21.8). $G{=}6$ also loses on the fine levels (level 6 NLL 1.86 vs 1.68).
-\emph{Fix: add halo.} With halo $h{=}4$, $G{=}5$ goes from 19.1 at $M{=}4$ to only 20.0 at $M{=}6$. That is the best
-$M{=}6$ result of any model, and its seams are the best at $M{=}4$ (boundary ratio 1.14 vs 1.17 for B2). At $M{=}4$ it
-ties B2 (19.1 vs 19.0). $G{=}6$ with halo generates best at $M{=}4$ (18.7) but still degrades at $M{=}6$ (23.6).
+\emph{Fix: add halo.} With halo $h{=}4$, $G{=}5$ goes from 19.05 at $M{=}4$ to 20.5 at $M{=}6$ (means of two seeds),
+the best $M{=}6$ result of any model; B2 goes from 18.7 to 32.3. At $M{=}4$, B2 leads by about 0.4 genPPL and the
+seams tie (boundary ratio 1.14 vs 1.13). $G{=}6$ with halo generates best at $M{=}4$ (18.7) but still degrades at $M{=}6$ (23.6).
 \emph{Resolution:} $G{=}5$ with halo is the final model; $G\ge 6$ learns the training length even with halo.
 
 \subsection{B2: fully global ($G{=}11$)}
@@ -180,8 +180,8 @@ all (memory) & dense graph $>$ 8\,GB & per-level path ($<10^{-6}$ equal) & fixed
 all (fp16) & quantizer NaN, silent & fp32 quantizer, abort on NaN & fixed \\
 Ours $G{=}3$ & seams 1.39 & halo attention, $h{=}4$ & 1.19, fixed \\
 Ours $G{=}3$ & plan recomputed per level & KV-cached plan (exact) & 2.0$\times$, fixed \\
-Ours $G{=}5,6$ & degrade at $M{=}6$ (23.8, 30.7) & halo; $G{=}5$ & $G{=}5$: 20.0, fixed; $G{=}6$: 23.6 \\
-B2 & collapse at $M{=}6$ (33.5) & none (baseline) & finding \\
+Ours $G{=}5,6$ & degrade at $M{=}6$ (23.8, 30.7) & halo; $G{=}5$ & $G{=}5$: 20.5 (2 seeds), fixed; $G{=}6$: 23.6 \\
+B2 & collapse at $M{=}6$ (33.5, 31.0) & none (baseline) & finding \\
 plan-only adapters & mask crash; bias stuck; leak; then NLL 1.834, genPPL 28.5 & key-dim bias; own lr; skip prefix & \textbf{failed} \\
 layer-drop refiner & +0.3--0.5 nats, genPPL $\times$1.5--2 & distillation (insufficient) & \textbf{failed} \\
 \bottomrule

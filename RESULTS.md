@@ -59,6 +59,33 @@ What this shows:
   jump. Measured separately, cutting *depth* on these levels failed (Milestone 4). Level-skipping at full depth
   remains open and is the cheaper idea to test next.
 
+## 2026-11-20: Second seed of the main models (Kaggle Version 7, `kaggle/run_seed.sh`, `--seed 1`)
+
+Same recipe; all four runs share one Kaggle encoding, so their NLL is comparable with each other (and with the
+Milestone 5b Kaggle runs), not with local NLL. Seed-0 values: B0, Ours G=3 + halo 4 and B2 from the local runs
+(Milestone 5), G=5 + halo 4 from Milestone 5b.
+
+| | B0 | Ours G=3 + halo 4 | **Ours G=5 + halo 4** | B2 |
+|---|---|---|---|---|
+| NLL, seed 1 (Kaggle encoding) | 1.6156 | **1.5999** | **1.6002** | 1.6353 |
+| Δ NLL vs B0, seed 1, 95% CI | — | −0.0157 [−0.0164, −0.0150] ‡ | −0.0157 ‡ | +0.0197 |
+| genPPL M=4, seed 0 / seed 1 / **mean** | 24.1 / 24.0 / **24.0** | 21.0 / 20.9 / **21.0** | 19.1 / 19.0 / **19.05** | 19.0 / 18.4 / **18.7** |
+| boundary ratio M=4, seed 0 / 1 / **mean** | 1.52 / 1.48 / **1.50** | 1.19 / 1.21 / **1.20** | 1.14 / 1.13 / **1.14** | 1.17 / 1.09 / **1.13** |
+| **genPPL M=6**, seed 0 / 1 / **mean** | 23.7 / 23.7 / **23.7** | 21.5 / 20.6 / **21.1** | 20.0 / 21.0 / **20.5** | 33.5 / 31.0 / **32.3** |
+| boundary ratio M=6, seed 1 | 1.50 | 1.19 | 1.15 | 1.13 |
+
+‡ From the paired bootstrap against B2 in the seed-1 breakdown (−0.0353 for both Ours runs vs B0's −0.0195).
+
+What replicates and what does not:
+- **Replicates: B2 collapses beyond the training length** (19.0 → 33.5 and 18.4 → 31.0), while Ours G=5 + halo 4
+  (20.0 / 21.0) and G=3 + halo 4 (21.5 / 20.6) hold. The main claim of the paper survives a second seed.
+- **Replicates: NLL ranking.** Both halo models beat B0 and B2 on NLL; B2 is worst again (levels 6–11, chunk 4).
+- **Replicates: halo fixes the seams** (B0 1.50 → 1.14–1.20 averaged).
+- **Corrected: at M=4, B2 is slightly better than G=5 + halo 4** (18.7 vs 19.05 averaged; seed 1: 18.4 vs 19.0),
+  and the seams are a tie (1.13 vs 1.14). Seed 0's "G=5 + halo 4 ties B2 with better seams" was within noise. The
+  accurate claim: B2 leads by about 0.4 genPPL at the training length and loses by about 12 at 1.5× the length.
+- G=3 and G=5 with halo tie on NLL in seed 1 (1.5999 vs 1.6002); G=5 generates better at M=4 (19.05 vs 21.0).
+
 ## 2026-11-19: AR reference vs base NCM vs Block-NCM (`experiments/ar_baseline.py`)
 
 AR model: `roneneldan/TinyStories-33M` (GPT-Neo, 68.5M parameters with embeddings, trained on TinyStories), the
@@ -165,7 +192,8 @@ Version 6, all stages passed). genPPL: GPT-2 Large, 2 seeds × 256 samples. The 
 
 What this shows:
 - **G=5 + halo 4 is the best model overall.** At the training length it ties B2 (19.1 vs 19.0) with better seams
-  (1.14 vs 1.17), and at M=6 it is the best of all runs (20.0 vs B2's 33.5). Halo also fixes G=5's extrapolation:
+  (1.14 vs 1.17), and at M=6 it is the best of all runs (20.0 vs B2's 33.5). *(Seed 1 corrects the M=4 part: B2
+  leads by about 0.4 and seams tie; see the 2026-11-20 second-seed section.)* Halo also fixes G=5's extrapolation:
   without halo G=5 went 20.0 → 23.8 at M=6; with halo it goes 19.1 → 20.0.
 - **G=6 + halo 4 generates best at M=4 (18.7, below B2) but still degrades at M=6 (23.6).** Six global levels
   learn the training length even with halo. Level 6 NLL is again worse when it is global (1.79 vs 1.59–1.61).
