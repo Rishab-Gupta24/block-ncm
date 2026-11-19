@@ -44,6 +44,7 @@ ap.add_argument("--corrupt-mean", type=float, default=0.0,
 ap.add_argument("--corrupt-span", type=float, default=0.5,
                 help="rate falls linearly from mean+span/2 (level 0) to mean-span/2 (level K-1)")
 ap.add_argument("--keep-ckpts", action="store_true", help="also save model_step{N}.pt at every evaluation")
+ap.add_argument("--data-suffix", default="", help="e.g. _sent for sentence-aligned chunks (train_M4_sent.npy)")
 ap.add_argument("--fast", action="store_true", help="FastChunkedNCM: KV-cached plan (exact, faster)")
 ap.add_argument("--halo", type=int, default=0, help="halo attention width for local levels (implies --fast)")
 ap.add_argument("--min-len", type=int, default=0,
@@ -69,11 +70,11 @@ if a.corrupt_mean > 0:
 assert 0 <= a.G <= model.K, f"G must be in [0, {model.K}]"
 
 chunked = os.path.expanduser(a.chunked)
-train = np.load(os.path.join(chunked, f"train_M{a.M}.npy"), mmap_mode="r")
-val = np.load(os.path.join(chunked, f"val_M{a.M}.npy"))
+train = np.load(os.path.join(chunked, f"train_M{a.M}{a.data_suffix}.npy"), mmap_mode="r")
+val = np.load(os.path.join(chunked, f"val_M{a.M}{a.data_suffix}.npy"))
 if a.min_len:
-    tl = np.load(os.path.join(chunked, f"train_M{a.M}_len.npy"))
-    vl = np.load(os.path.join(chunked, f"val_M{a.M}_len.npy"))
+    tl = np.load(os.path.join(chunked, f"train_M{a.M}{a.data_suffix}_len.npy"))
+    vl = np.load(os.path.join(chunked, f"val_M{a.M}{a.data_suffix}_len.npy"))
     assert len(tl) == len(train) and len(vl) == len(val), "length files do not match the code arrays"
     train = train[np.nonzero(tl >= a.min_len)[0]]  # fancy indexing loads the subset into RAM
     val = val[vl >= a.min_len]

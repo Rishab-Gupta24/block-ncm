@@ -98,15 +98,21 @@ toks = [full_tokens(ch) for _, ch in samples]
 W = a.window
 bwin, iwin = [], []
 for _, ch in samples:
-    flat = [i for c in ch for i in c]
+    # seams are measured on each chunk's real tokens (PAD removed), so padded, sentence-aligned chunks work too;
+    # for fixed 128-token chunks this is identical to cutting at multiples of C
+    flat, starts = [], []
+    for c in ch:
+        starts.append(len(flat))
+        flat += [i for i in c if i != PAD]
+    starts.append(len(flat))
     end = flat.index(EOS) if EOS in flat else len(flat)
     for m in range(a.M - 1):
-        b = (m + 1) * C
-        if b + W <= end:
+        b = starts[m + 1]
+        if b - W >= 0 and b + W <= end:
             bwin.append(dec(clean(flat[b - W:b + W])))
     for m in range(a.M):
-        mid = m * C + C // 2
-        if mid + W <= end:
+        mid = (starts[m] + starts[m + 1]) // 2
+        if mid - W >= 0 and mid + W <= end:
             iwin.append(dec(clean(flat[mid - W:mid + W])))
 
 out = a.out or os.path.join(os.path.expanduser(a.run) if a.run else os.path.expanduser("~/ncm/runs/zeroshot"),
