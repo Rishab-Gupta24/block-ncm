@@ -110,3 +110,57 @@ Expected ordering on quality: B0 < Ours ≤ B2, with B1 as the sequential refere
 4. Write the training loop (loss, the two sequence types, chunk embedding); fine-tune Ours, B0, B1, B2.
 5. E1–E5 on TinyStories (OWT only if its checkpoint is released).
 6. Revise the paper's framing: abstract and introduction lead with sequential depth and length extrapolation, not FLOPs.
+
+## 9. Future work (beyond paper 1)
+
+### 9.1 Code generation
+
+The method is not specific to stories. The complexity analysis (`paper/sections/complexity_and_bounds.tex`)
+and the serving-cost model (`paper/scripts/serving_cost.py`) depend only on sequence length, levels and
+hardware, so they apply to code unchanged. Whether the method *works* on code is an open empirical question.
+
+**Why code is a good fit**
+- **Hierarchical structure:** file → classes and functions → statements → tokens. A global plan (imports,
+  signatures, identifiers) with local fine levels (function bodies) matches it; chunks could align with
+  functions.
+- **Latency-bound use:** the cost model puts Block-NCM's advantage at low batch, roughly 29× faster than AR
+  at batch 1 (analytic, 7B on an H100). Coding assistants serve one user waiting on one result.
+- **Executable evaluation:** pass@k on unit tests (HumanEval, MBPP) and syntax validity (`ast.parse`) give a
+  direct correctness signal instead of perplexity under a reference model.
+- **Fill-in-the-middle:** NCM does not generate left to right, so infilling between existing code above and
+  below may come naturally. The halo design (Sec. 3) already conditions on neighbouring chunks.
+
+**Why code is harder**
+1. **Exactness.** NCM samples every position of a level in parallel, which produces occasional wrong tokens.
+   We observe these in stories ("there was a that threat"); in code a single one breaks compilation. Code
+   would need a repair or verify step: re-sampling low-confidence positions, or compiler and test feedback.
+2. **Exact cross-chunk dependencies.** Stories need consistent topics and characters. Code needs identical
+   identifiers across functions. Our M=4 results show a coarse plan carries topic but not exact tokens, so
+   for code the plan must carry identifiers exactly, for example a symbol table in the prefix.
+3. **Conditioning.** Code generation always starts from a prompt (spec, docstring, surrounding file).
+   Everything in paper 1 is unconditional; B1's raw-token prefix is the starting point.
+4. **No released NCM for code.** HazyResearch released TinyStories, XSum, WMT14, LM1B and Sudoku checkpoints,
+   not code, and only evaluation code is public. A code NCM needs a tokenizer and generator trained from
+   scratch, including the conditioning-corruption recipe (Sec. 3.4 of the NCM paper).
+5. **Short completions.** Typical IDE completions fit in one 128-token chunk, where Block-NCM adds nothing. The
+   benefit needs long outputs: whole files, large edits, test suites.
+
+**Related work to check before citing:** parallel and diffusion-style code generators exist in industry and
+research, e.g. Inception Labs' Mercury Coder and Apple's DiffuCoder. Verify their details first.
+
+**Plan**
+1. Finish paper 1 on TinyStories first: the fine-tuning recipe must pass the single-chunk gate, and seams and
+   extrapolation must be shown.
+2. Small pilot: train a small NCM (tokenizer and generator) on Python functions from a filtered open code
+   dataset, unconditional at first. Measure syntax validity and pass@k on simple problems. This fits an
+   8 GB GPU at small scale.
+3. Full version (a second paper): prompt-conditioned Block-NCM, chunks aligned to functions, a plan that
+   carries identifiers exactly, and a repair step for parallel-sampling errors.
+
+### 9.2 Other directions noted during paper 1
+
+- **Level-adaptive depth:** levels 7–11 are 73% of NCM's positions but the most predictable (level 11:
+  0.17 nats). A shallower network for fine levels could save about a third of compute.
+- **Fewer or shorter levels:** NCM runs ρ = 5.0 positions per output token. This is what makes it costlier
+  than AR at large batch in the cost model, so reducing ρ directly reduces cost.
+- **Batch-1 / on-device benchmark:** measure the cost model's batch-1 latency and energy claims on real hardware.
