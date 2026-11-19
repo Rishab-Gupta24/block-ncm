@@ -174,7 +174,7 @@ restricted to low batch sizes (Sec.~\ref{sec:complexity}).
 \toprule
 model / part & failure & fix & status \\
 \midrule
-all (recipe) & clean fine-tuning: genPPL 47.7 on single chunks & conditioning corruption 0.5, lr $3{\times}10^{-5}$ & 20.7; 4--5 gap \textbf{open} \\
+all (recipe) & clean fine-tuning: genPPL 47.7 on single chunks & corruption 0.5, lr $3{\times}10^{-5}$; residual: unfiltered data + KL anchor & 16.1 (released 16.5), mostly fixed \\
 all (metrics) & padding diluted NLL & mask padding per document & fixed \\
 all (memory) & dense graph $>$ 8\,GB & per-level path ($<10^{-6}$ equal) & fixed \\
 all (fp16) & quantizer NaN, silent & fp32 quantizer, abort on NaN & fixed \\
