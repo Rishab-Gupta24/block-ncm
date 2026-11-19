@@ -191,6 +191,15 @@ It targets exactly the deficit measured here.
 | lr 1e-4, clean | 1.327 / 1.272 | 41.0 | 3.99 |
 | lr 1e-5, clean | 1.397 / 1.381 | 34.1 | 3.98 |
 | lr 1e-4, corruption mean 0.5 (0.75 → 0.25) | 1.579 / 1.554 | **22.2** | 3.92 |
+| lr 1e-4, corruption mean 0.25 (0.50 → 0.00) | 1.487 / 1.441 | 24.4 | 3.94 |
+| lr 1e-4, corruption flat 0.5 | 1.574 / 1.550 | 21.8 | 3.92 |
+| lr 3e-5, corruption mean 0.5 (0.75 → 0.25) | 1.536 / 1.533 | **20.7** | 3.92 |
+
+None passes the gate. More corruption is monotonically better (0 → 41.0, 0.25 → 24.4, 0.5 → 22.2), the schedule
+shape barely matters (flat 21.8 vs linear 22.2), and a lower learning rate helps slightly (20.7). All corrupted
+runs land at 20.7–22.2 with entropy 3.92, even when NLL matches the released calibration. Next: a
+learning-rate-≈0 control (does the train → save → load → generate path itself cost quality?), effective batch 128,
+and lr 1e-5 with corruption.
 
 - **The damage is in the recipe, not the data:** clean training on the released model's own kind of data
   (openings) breaks generation, and a 10× lower learning rate only slows it.
