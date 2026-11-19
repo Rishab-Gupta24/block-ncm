@@ -50,6 +50,57 @@ small passes.
 - **The economic case is low-batch, latency-bound generation** (interactive, on-device, single-user), not
   high-throughput serving.
 
+## 2026-11-19: Simulations of next methods (projections, not measurements)
+
+### Quality: projected NLL for other G (`experiments/project_G.py`)
+
+Levels ≤ G take the fully global run's (B2) per-level NLL; levels > G take the measured Block-NCM local levels
+(G=3 plan). Inputs are the clean-recipe M=4 runs, non-padding codes. Level-size weighting reproduces the
+measured totals to within 0.002. Per level, global attention wins on levels 1–7 (most on level 4: −0.12, and
+level 5: −0.08); local-with-plan wins on levels 8–11 (level 9: +0.027).
+
+| G | projected NLL | vs B2 | share of B0→B2 gap |
+|---|---|---|---|
+| 3 (measured: 1.3154) | 1.3124 | +0.003 | 84% |
+| 4 | 1.3063 | −0.003 | 114% |
+| 5 | 1.3011 | −0.008 | 140% |
+| **6–7** | **1.2998** | **−0.009** | **147%** |
+| 9 | 1.3048 | −0.004 | 122% |
+| 11 (= B2) | 1.3091 | 0 | 100% |
+
+Projection: **G = 6–7 would beat fully global attention**, by taking B2's gains on levels 4–7 while keeping
+levels 8–11 local. Caveats: built from clean-recipe runs (to be redone on the corrupted retrain); one seed;
+B2's fine-level deficit may shrink with longer training; a richer plan could help local levels beyond what is
+assumed.
+
+### Cost: method variants (`paper/scripts/method_scenarios.py`; 7B on an H100, as in the serving-cost model)
+
+| method | positions per token | batch-1 latency, 2k tokens | vs AR | $/1M at batch 256 | AR cheaper from batch |
+|---|---|---|---|---|---|
+| Block-NCM G=3 (current) | 5.00 | 0.369 s | 29× | 0.125 | 34 |
+| Block-NCM G=6 | 5.00 | 0.374 s | 29× | 0.127 | 34 |
+| G=3 + halo h=8 | 6.00 | 0.443 s | 24× | 0.150 | 28 |
+| G=3 + half-depth levels 7–11 | 3.17 | 0.234 s | 46× | 0.079 | 59 |
+| G=2 + 6 levels (8, 16, 32, 64, 96, 128) | 2.69 | 0.198 s | 54× | 0.067 | 74 |
+| 6 levels + half-depth last 3 | 1.56 | 0.115 s | 93× | 0.039 | 171 |
+| B2 fully global | 5.00 | 0.381 s | 28× | 0.129 | 33 |
+| B1 chunks in sequence | 5.00 | 0.919 s | 12× | 0.123 | 35 |
+
+These assume each variant keeps quality, which only experiments can show. Raising G is nearly free (+1%).
+A halo of h=8 costs about 20% because halo positions are processed as queries; h=4 or halo on only a few levels
+would cost less. Reducing positions per token (shallower fine levels, fewer levels) is the only lever that moves
+the cost crossover with AR.
+
+### RTX 5050 time budget for the next runs (from measured s/step)
+
+| run | uncached plan | KV-cached plan |
+|---|---|---|
+| Ours G=5 / G=6 | 88 / 91 min | 56 / 56 min |
+| Ours G=3 + halo h=8 | 97 min | 67 min |
+| 2nd seed: B0 + Ours + B2 | 196 min | 170 min |
+| long runs, 5000 steps: B0 + best Ours + B2 | 676 min | 568 min |
+| **total** | **19.1 h** | **15.3 h** |
+
 ## 2026-11-19: Implementation checks (`experiments/test_equivalence.py`)
 
 - `ChunkedNCM` with M=1 reproduces the released teacher-forced loss exactly for G=0 and G=K
