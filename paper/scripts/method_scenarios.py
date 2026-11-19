@@ -70,6 +70,7 @@ scen = [
     ("G=2 + 6 levels [8..128]", dict(levels=few, G=2)),
     ("G=2 + 6 levels + half-depth last 3", dict(levels=few, G=2, depth=[1, 1, 1, .5, .5, .5])),
     ("G=3 + 0.25x refiner on local levels", dict(levels=TS, G=3, depth=[1.0] * 3 + [0.25] * 8)),
+    ("G=3 + 0.15x refiner on local levels", dict(levels=TS, G=3, depth=[1.0] * 3 + [0.15] * 8)),
     ("B2 fully global", dict(levels=TS, G=3, variant="B2")),
     ("B1 chunks in sequence", dict(levels=TS, G=3, variant="B1")),
 ]
