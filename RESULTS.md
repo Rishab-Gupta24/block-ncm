@@ -76,9 +76,45 @@ What this shows:
 - **Seams: B2 gains from lower temperature, Ours G=3 + halo 4 does not.** B2's boundary ratio drops to 1.10 (below
   Ours' 1.18), so at T ≤ 0.9 Ours G=3 + halo 4 no longer has a seam advantage over B2 at the training length. B0's
   seams stay bad (1.46): the seam problem without a plan is not a sampling-noise effect.
-- The final model (G=5 + halo 4) was only trained on Kaggle. It is being trained locally (seed 0) and swept at
-  1.0 / 0.9 / 0.8 at M=4 and M=6, with B2, Ours G=3 + halo 4 and B0 at M=6 and temperature 0.8, to test whether B2's
-  M=6 collapse survives lower temperature.
+
+**G=5 + halo 4 trained locally (seed 0, local encoding), and M=6 at low temperature.** Validation NLL 1.945 (G=3 +
+halo 4: 1.946).
+
+| model | M=4, T 1.0 / 0.9 / 0.8 | M=6, T 1.0 / 0.9 / 0.8 | seams M=4, T 1.0 / 0.8 | seams M=6, T 1.0 / 0.8 |
+|---|---|---|---|---|
+| B0 | 24.1 / 20.7 / 18.6 | 23.7 / — / 18.8 | 1.52 / 1.46 | 1.50 / 1.47 |
+| Ours G=3 + halo 4 | 21.0 / 18.2 / 16.0 | 21.5 / — / **17.9** | 1.19 / 1.18 | 1.19 / 1.20 |
+| Ours G=5 + halo 4 (local) | 19.4 / 16.6 / 14.9 | 25.2 / 28.9 / 36.9 | 1.17 / 1.13 | 1.19 / 1.22 |
+| B2 | 19.0 / 16.4 / 14.6 | 33.5 / — / 57.3 | 1.17 / 1.10 | 1.15 / 1.17 |
+
+- **Locally, G=5 + halo 4 extrapolates much worse than on Kaggle: 25.2 at M=6** (sd 1.0), against 20.0 and 20.5
+  and 21.0 for the two Kaggle seeds (G=3 + halo 4: 21.5 local, 20.6 Kaggle). At M=4 it reproduces (19.4 vs 19.1). The M=6 result for G=5 is therefore not robust
+  across runs and platforms. The Kaggle seed-2 run will add a third value.
+- **Lower temperature makes long-range failure worse.** At M=6, G=5 + halo 4 goes 25.2 → 28.9 → 36.9 and B2
+  33.5 → 57.3 as temperature drops 1.0 → 0.8, with entropy falling (G=5: 4.29 → 4.03). This looks like
+  repetition/degeneration beyond the trained length, which low temperature amplifies (not yet checked by reading
+  samples). Models that extrapolate well improve instead: G=3 + halo 4 goes 21.5 → 17.9 and B0 23.7 → 18.8.
+- **Confound: the models that "extrapolate" mostly end their stories on time.** genPPL is scored up to the first
+  end-of-text token. At M=6, how often samples reach the 6th chunk, and their mean length (BPE tokens):
+
+  | M=6 | T=1.0: reach chunk 6 / mean tokens | T=0.8: reach chunk 6 / mean tokens |
+  |---|---|---|
+  | B0 | 2.7% / 415 | 0.6% / 395 |
+  | Ours G=3 + halo 4 | 11.5% / 482 | 3.1% / 433 |
+  | Ours G=5 + halo 4 | 8.4% / 473 | 29.1% / 526 |
+  | B2 | 13.3% / 480 | 27.5% / 511 |
+
+  (At M=4, 70–87% of samples reach chunk 4, mean 392–417 tokens.) B0 and G=3 + halo 4 at M=6 mostly write
+  4-chunk-length stories and end them, so their M=6 scores are close to their M=4 scores by construction. B2 and
+  G=5 at low temperature keep writing past the trained length, and that text scores badly. Ending a story at the
+  trained length is the training-data behaviour (long stories cut at 512 tokens), but it means these M=6 numbers
+  measure "ends on time vs runs on" more than quality at 6 chunks. Distinct-4-gram ratios within chunks are 0.99
+  for every model, so it is not simple repetition.
+- **Length-controlled scoring is running** (`experiments/score_tail.py`): only samples longer than 576 tokens,
+  scored on the full text and on the part beyond token 512, from the saved samples. Until it reports, the claim
+  "Ours extrapolates, B2 collapses" should be read as "B2 and G=5 fail to end stories at the trained length and
+  degrade when they run on"; whether G=3 + halo 4 writes better 6-chunk text is not yet shown.
+- At M=4, G=3 + halo 4 trails G=5 and B2 by about 1–1.5 genPPL at every temperature.
 
 ## 2026-11-20: Second seed of the main models (Kaggle Version 7, `kaggle/run_seed.sh`, `--seed 1`)
 
