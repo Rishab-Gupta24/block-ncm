@@ -12,9 +12,10 @@
 # model's breakdown is included as a cross-platform calibration point.
 #
 # Runs (recipe: corruption 0.5, lr 3e-5, 1,500 steps x 8 docs, KV-cached plan):
-#   GPU 0: oursc_M4_G5_halo4_s1 (final model), then b0c_M4_G0_s1
-#   GPU 1: b2c_M4_G11_s1, then oursc_M4_G3_halo4_s1
+#   GPU 0: oursc_M4_G5_halo4_s$SEED (final model), then b0c_M4_G0_s$SEED
+#   GPU 1: b2c_M4_G11_s$SEED, then oursc_M4_G3_halo4_s$SEED
 set -u
+SEED=${SEED:-1}   # training seed; run names get the suffix _s$SEED
 W=/kaggle/working
 REPO=$W/block-ncm
 OUT=$W/results
@@ -69,7 +70,7 @@ CUDA_VISIBLE_DEVICES=0 python experiments/test_fast.py --device cuda --bs 2 --no
 grep -E "^\[|passed" $OUT/test_fast.txt | tee -a $OUT/progress.txt
 grep -q "all fast-path checks passed" $OUT/test_fast.txt || { echo "    FAILED test_fast"; tail -30 $OUT/test_fast.txt; FAIL=1; }
 
-COMMON="--M 4 --ckpt $CK --chunked $CH --runs $RU --steps $STEPS --bs 8 --lr 3e-5 --eval-every $EVAL_EVERY --val-docs $VAL_DOCS --grad-ckpt --corrupt-mean 0.5 --fast --seed 1"
+COMMON="--M 4 --ckpt $CK --chunked $CH --runs $RU --steps $STEPS --bs 8 --lr 3e-5 --eval-every $EVAL_EVERY --val-docs $VAL_DOCS --grad-ckpt --corrupt-mean 0.5 --fast --seed $SEED"
 train_list() {  # train_list GPU "name:G:H ..."
   local gpu=$1; shift
   for spec in $@; do
@@ -79,8 +80,8 @@ train_list() {  # train_list GPU "name:G:H ..."
     grep -E "autocast| val |done in|nan|inf" $OUT/train_$N.txt | tail -6 | sed "s/^/[gpu $gpu] /" >> $OUT/progress.txt
   done
 }
-L0="oursc_M4_G5_halo4_s1:5:4 b0c_M4_G0_s1:0:0"
-L1="b2c_M4_G11_s1:11:0 oursc_M4_G3_halo4_s1:3:4"
+L0="oursc_M4_G5_halo4_s$SEED:5:4 b0c_M4_G0_s$SEED:0:0"
+L1="b2c_M4_G11_s$SEED:11:0 oursc_M4_G3_halo4_s$SEED:3:4"
 log "train ($NGPU GPUs)"
 if [ "$NGPU" -ge 2 ]; then
   train_list 0 $L0 & P0=$!
@@ -94,10 +95,10 @@ for spec in $L0 $L1; do N=${spec%%:*}; check $RU/$N/model.pt $OUT/train_$N.txt; 
 
 log "NLL breakdown (released model as calibration)"
 CUDA_VISIBLE_DEVICES=0 python experiments/nll_breakdown.py --M 4 --max-docs $MAX_DOCS --runs-dir $RU --ckpt $CK --chunked $CH --data $DA \
-  --n-boot $NBOOT --runs released:0 b0c_M4_G0_s1:0 oursc_M4_G3_halo4_s1:3 oursc_M4_G5_halo4_s1:5 b2c_M4_G11_s1:11 \
-  --out $OUT/nll_breakdown_seed1.json 2>&1 | quiet > $OUT/nll_breakdown_seed1.txt
-sed -n '/non-padding codes only/,$p' $OUT/nll_breakdown_seed1.txt | tee -a $OUT/progress.txt
-check $OUT/nll_breakdown_seed1.json $OUT/nll_breakdown_seed1.txt
+  --n-boot $NBOOT --runs released:0 b0c_M4_G0_s$SEED:0 oursc_M4_G3_halo4_s$SEED:3 oursc_M4_G5_halo4_s$SEED:5 b2c_M4_G11_s$SEED:11 \
+  --out $OUT/nll_breakdown_seed$SEED.json 2>&1 | quiet > $OUT/nll_breakdown_seed$SEED.txt
+sed -n '/non-padding codes only/,$p' $OUT/nll_breakdown_seed$SEED.txt | tee -a $OUT/progress.txt
+check $OUT/nll_breakdown_seed$SEED.json $OUT/nll_breakdown_seed$SEED.txt
 
 eval_list() {  # eval_list GPU "name:G ..."
   local gpu=$1; shift
