@@ -62,20 +62,21 @@ def ncm_codes(B):
 
 
 def decode(codes, B, amp=True):
-    # The decoder in fp32 hits a slow path on this GPU (4.6 s at batch 32 vs 0.014 s under autocast; see
-    # experiments/profile_decode.py), so decode in the same precision as the generator. Token agreement with the fp32
-    # decode is checked once below.
-    with torch.no_grad(), torch.autocast("cuda", dtype=AMP or torch.float32, enabled=amp and AMP is not None):
+    # The decoder in plain fp32 hits a slow path on this GPU (4.2 s at batch 32; experiments/decode_precision.py).
+    # Code-to-latent lookup stays fp32 (running it under bf16 changed 9% of tokens); only the decoder runs under fp16
+    # autocast (0.011 s, 99.95% token agreement with fp32). Agreement is checked once below.
+    with torch.no_grad():
         _, zl = ncm.vq.idx_to_zhats(codes.reshape(B * a.M, -1), return_zlevels=True)
-        return ncm.vqvae.decoder(zl[-1].float()).argmax(-1)
+        with torch.autocast("cuda", dtype=torch.float16, enabled=amp):
+            return ncm.vqvae.decoder(zl[-1].float()).argmax(-1)
 
 
 def ncm_total(B):
     return decode(ncm_codes(B), B)
 
 
-c8 = ncm_codes(8)
-agree = (decode(c8, 8) == decode(c8, 8, amp=False)).float().mean().item()
+c8 = ncm_codes(32)
+agree = (decode(c8, 32) == decode(c8, 32, amp=False)).float().mean().item()
 res["decode_amp_token_agreement"] = agree
 print(f"decoder token agreement, autocast vs fp32: {agree:.5f}", flush=True)
 

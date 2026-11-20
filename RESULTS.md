@@ -248,9 +248,30 @@ What this shows:
   32, codes 2.68 s and total 2.77 s, i.e. 0.087 s per sample (AR 0.227 s: 2.6×). The decoder in fp32 took 4.28 s
   and under bf16 autocast 0.011 s. **But bf16 decoding changes 9% of output tokens** (agreement with fp32 0.910), so
   it is not the same decode, and the batch-32 total above is not yet a valid like-for-like number.
-  `experiments/decode_precision.py` (TF32, fp16, bf16, and a kernel profile of the fp32 path) is queued to find a
-  fast decode that matches fp32. Safe claims for now: 15–18× faster at batch 1 including the fp32 decode; generator
-  passes 2.3–2.6× faster per sample at batch 32.
+- **Decoder precision (`experiments/decode_precision.py`, batch 32, latents from the fp32 lookup):**
+
+  | decoder precision | time | token agreement with fp32 |
+  |---|---|---|
+  | fp32 (TF32 off, PyTorch default) | 4.227 s | 1 |
+  | fp32 + TF32 matmuls | 0.090 s | 0.99976 |
+  | fp16 autocast | 0.011 s | 0.99951 |
+  | bf16 autocast | 0.011 s | 0.99670 |
+
+  The 9% disagreement came from running the code-to-latent lookup under bf16, not the decoder. The slow path is fp32
+  matmul with TF32 off (47× slower than with TF32).
+- **Final same-GPU timing (idle RTX 5050, 06:52; lookup fp32, decoder fp16, 99.96% token agreement with fp32):**
+
+  | model | batch | codes s | total s | s per sample | speed-up |
+  |---|---|---|---|---|---|
+  | Block-NCM G=5 + halo 4 (512 tokens) | 1 | 0.37 | 0.38 | 0.38 | **16.6×** |
+  | TinyStories-33M (517 tokens) | 1 | — | 6.24 | 6.24 | |
+  | Block-NCM G=5 + halo 4 | 32 | 2.66 | 2.74 | 0.086 | **2.3×** |
+  | TinyStories-33M | 32 | — | 6.43 | 0.201 | |
+
+  AR timings varied between runs (batch 1: 6.2–8.1 s; laptop GPU clocks), so the speed-ups are about 15–18× at
+  batch 1 and 2.3–2.6× at batch 32. Caveats: the AR side is unoptimised Hugging Face `generate` (no CUDA graphs or
+  fused kernels), so the batch-1 ratio is an upper bound. The Block-NCM network is larger than the 68.5M AR model
+  (its checkpoint is 546 MB in fp32), so the speed-up comes from the 11 sequential passes, not from a smaller model.
 
 ## 2026-11-19: Sentence-aligned chunks and plan-only adapters (local, one seed)
 
