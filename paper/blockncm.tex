@@ -64,8 +64,7 @@ Block-NCM sits between the two: only the coarse levels, which carry topic and ch
   \item \textbf{Block-NCM}, a chunked NCM whose coarse levels form a shared plan and whose fine levels are local
         with a small halo. It takes 11 sequential passes for any number of chunks (Section~\ref{sec:method}).
   \item \textbf{Measured speed}: 16.6$\times$ faster than an AR model at batch 1 and 2.3$\times$ at batch 32 on the
-        same GPU, and faster than chunk-by-chunk generation by a factor that grows with length
-        (Section~\ref{sec:speed}).
+        same GPU (Section~\ref{sec:speed}).
   \item \textbf{A quality--robustness trade-off in $G$}: more global levels give better text at the trained length
         and worse text beyond it, with fully global attention at the extreme. A matched per-chunk test locates the
         failure in the plan itself (Section~\ref{sec:length}).
@@ -185,11 +184,10 @@ Second, the tokenizer's decoder must run with TF32 or fp16 matrix multiplies: in
 takes 4.2\,s at batch 32. We run the code lookup in fp32 and the decoder in fp16, which matches the fp32 output on
 99.96\% of tokens.
 
-\paragraph{Against chunks in sequence (B1).} %B1-PARAGRAPH%
-
 \paragraph{At 7B scale (estimate).} A roofline cost model with both models at 7B parameters on an H100
 (Appendix~\ref{sec:cost}) predicts 26--27$\times$ lower batch-1 latency than an AR model for 2,048-token outputs,
-with AR becoming cheaper per token from batch 31. Block-NCM processes about 5.4 positions per output token, so
+with AR becoming cheaper per token from batch 31. The same model puts generating chunks one after another (B1)
+about 2.3$\times$ slower than Block-NCM at batch 1. Block-NCM processes about 5.4 positions per output token, so
 high-throughput serving favours AR; the case for Block-NCM is low-batch, latency-bound generation. In this model
 Block-NCM is about 5\% slower than B2, because halo positions add queries.
 
