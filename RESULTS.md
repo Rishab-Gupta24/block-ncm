@@ -110,10 +110,30 @@ halo 4: 1.946).
   trained length is the training-data behaviour (long stories cut at 512 tokens), but it means these M=6 numbers
   measure "ends on time vs runs on" more than quality at 6 chunks. Distinct-4-gram ratios within chunks are 0.99
   for every model, so it is not simple repetition.
-- **Length-controlled scoring is running** (`experiments/score_tail.py`): only samples longer than 576 tokens,
-  scored on the full text and on the part beyond token 512, from the saved samples. Until it reports, the claim
-  "Ours extrapolates, B2 collapses" should be read as "B2 and G=5 fail to end stories at the trained length and
-  degrade when they run on"; whether G=3 + halo 4 writes better 6-chunk text is not yet shown.
+- **Length-controlled scoring** (`experiments/score_tail.py`, from the saved M=6 samples): only samples longer than
+  576 tokens (4.5 chunks), scored on the full text and on the tail beyond token 512 (the part past the trained
+  length). 1,024 samples per cell (2 seeds × 512):
+
+  | M=6, samples > 576 tokens | T=1.0: share / full / tail | T=0.8: share / full / tail |
+  |---|---|---|
+  | B0 | 2.7% / 24.9 / 29.3 | 0.6% / 24.8 / 20.3 |
+  | Ours G=3 + halo 4 | 17.8% / **22.5** / **36.2** | 4.9% / **28.5** / 54.1 |
+  | Ours G=5 + halo 4 | 14.1% / 30.8 / 57.5 | 29.9% / 52.5 / 43.7 |
+  | B2 | 15.8% / 49.8 / 90.1 | 28.1% / 66.3 / 62.0 |
+
+  - **On long samples only, the ranking holds: G=3 + halo 4 < G=5 + halo 4 < B2**, on full text at both temperatures
+    (T=1.0: 22.5 / 30.8 / 49.8) and on the tail at T=1.0 (36.2 / 57.5 / 90.1). So the plan models write better
+    6-chunk text than B2 when they do run long, not only end on time. B2's long text is more than twice as bad.
+  - **No model extrapolates gracefully.** Text past token 512 is worse than within-length text for every model
+    (G=3 + halo 4: tail 36.2 vs about 21 overall). G=3 + halo 4 degrades least.
+  - **Caveats:** the long samples are a self-selected subset of different size per model (the runs that did not
+    end), so this is not a matched comparison. B0's subset is too small to read (28 and 6 samples). At T=0.8 G=3's
+    tail (54.1, 50 samples) is worse than G=5's (43.7, 306 samples). A matched test would force every model to
+    write 6 chunks (block end-of-text, as for the AR baseline) and score the same positions.
+- **Revised claim for the paper:** B2 collapses beyond the trained length (full M=6 score and length-controlled,
+  both seeds). Plan models with fewer global levels degrade less. G=3 + halo 4 is the most robust beyond the
+  trained length. G=5 + halo 4 is better at the trained length but its M=6 result varies across runs (20.0, 21.0,
+  25.2).
 - At M=4, G=3 + halo 4 trails G=5 and B2 by about 1–1.5 genPPL at every temperature.
 
 ## 2026-11-20: Second seed of the main models (Kaggle Version 7, `kaggle/run_seed.sh`, `--seed 1`)
