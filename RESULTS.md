@@ -136,6 +136,23 @@ What this shows:
   batch 32 vs 0.24 s for AR on the RTX 5050 at batch 64) even though the AR model is smaller, but the AR side uses
   unoptimised Hugging Face `generate`, so this is indicative only. The 7B cost model (26.5× faster at batch 1, AR
   cheaper from batch 32) remains the cost estimate.
+- **Same-GPU timing (preliminary, RTX 5050, 2026-11-20 04:01, `experiments/time_gen.py`).** Block-NCM G=5 + halo 4
+  (M=4, 512 tokens, 11 passes plus decode to tokens, bf16) vs TinyStories-33M (517 tokens, KV cache, bf16, HF
+  `generate`), median of 5 runs:
+
+  | model | batch | s per batch | s per sample |
+  |---|---|---|---|
+  | Block-NCM G=5 + halo 4 | 1 | 0.45 | 0.45 |
+  | Block-NCM G=5 + halo 4 | 32 | 7.70 | 0.24 |
+  | TinyStories-33M | 1 | 7.40 | 7.40 |
+  | TinyStories-33M | 32 | 10.17 | 0.32 |
+
+  Batch 1: Block-NCM is about 16× faster. AR at batch 1 is bound by per-token overhead (14 ms per token, mostly
+  Python and kernel-launch overhead for a 4-layer model). Batch 32: only 1.3× faster per sample, since NCM is
+  compute-bound and AR's per-step overhead is shared across the batch. The same pattern as the 7B cost model.
+  Caveat: the codes-only Block-NCM timing at batch 1 (0.60 s) came out above codes + decode (0.45 s), so the first
+  timed configuration was not warmed up. A rerun with 3 warm-ups and 10 repeats is queued after the temperature
+  sweep.
 
 ## 2026-11-19: Sentence-aligned chunks and plan-only adapters (local, one seed)
 

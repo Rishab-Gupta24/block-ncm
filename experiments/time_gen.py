@@ -27,7 +27,7 @@ ap.add_argument("--M", type=int, default=4)
 ap.add_argument("--G", type=int, default=5)
 ap.add_argument("--halo", type=int, default=4)
 ap.add_argument("--batches", default="1,32")
-ap.add_argument("--reps", type=int, default=5)
+ap.add_argument("--reps", type=int, default=10)
 ap.add_argument("--ar-model", default="roneneldan/TinyStories-33M")
 ap.add_argument("--ar-tokens", type=int, default=517)
 ap.add_argument("--ckpt", default="~/ncm/checkpoints/tinystories")
@@ -38,8 +38,9 @@ AMP = amp_dtype(a.amp)
 bs = [int(x) for x in a.batches.split(",")]
 
 
-def timed(fn, reps):
-    fn()
+def timed(fn, reps, warmup=3):
+    for _ in range(warmup):  # one warm-up was not enough: the first-timed config read slow (clock ramp, allocator)
+        fn()
     torch.cuda.synchronize()
     ts = []
     for _ in range(reps):
@@ -95,7 +96,8 @@ for B in bs:
                         "total_s": t, "total_s_per_sample": t / B})
     print(res["rows"][-1], flush=True)
 
-print("\n| model | batch | s per batch | s per sample |\n|---|---|---|---|")
+print("\n| model | batch | codes s | s per batch | s per sample |\n|---|---|---|---|---|")
 for r in res["rows"]:
-    print(f"| {r['model']} | {r['batch']} | {r['total_s']:.3f} | {r['total_s_per_sample']:.4f} |")
+    c = f"{r['codes_s']:.3f}" if "codes_s" in r else "—"
+    print(f"| {r['model']} | {r['batch']} | {c} | {r['total_s']:.3f} | {r['total_s_per_sample']:.4f} |")
 json.dump(res, open(os.path.expanduser(a.out), "w"), indent=2)
