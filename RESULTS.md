@@ -59,6 +59,27 @@ What this shows:
   jump. Measured separately, cutting *depth* on these levels failed (Milestone 4). Level-skipping at full depth
   remains open and is the cheaper idea to test next.
 
+## 2026-11-20: Sampling temperature (local, seed 0, M=4, 512 samples × 2 seeds)
+
+| model | temp 1.0 | temp 0.9 | temp 0.8 | boundary ratio 1.0 / 0.9 / 0.8 | entropy 1.0 / 0.9 / 0.8 |
+|---|---|---|---|---|---|
+| B0 (G=0) | 24.1 | 20.7 | 18.6 | 1.52 / 1.49 / 1.46 | 4.50 / 4.46 / 4.43 |
+| Ours G=3 + halo 4 | 21.0 | 18.2 | 16.0 | 1.19 / 1.18 / 1.18 | 4.41 / 4.35 / 4.31 |
+| B2 (G=11) | 19.0 | 16.4 | 14.6 | 1.17 / **1.10** / **1.10** | 4.36 / 4.32 / 4.28 |
+| released, single chunk (128 tokens) | 16.5 | 14.8 | 13.8 | — | 3.98 / 3.97 / 3.96 |
+
+- **Lower temperature helps every model by about the same factor** (0.8: genPPL × 0.77 for B0 and Ours, × 0.77
+  for B2). The ranking B2 < Ours < B0 holds at every temperature, and the plan benefit over B0 stays about 13%.
+- **At temperature 0.8 the M=4 models reach or pass the released model's temperature-1.0 fluency** (B2 14.6, Ours
+  16.0 vs 16.5), though the released model also improves (13.8). Temperature does not close the gap to the released
+  model; it moves all models together.
+- **Seams: B2 gains from lower temperature, Ours G=3 + halo 4 does not.** B2's boundary ratio drops to 1.10 (below
+  Ours' 1.18), so at T ≤ 0.9 Ours G=3 + halo 4 no longer has a seam advantage over B2 at the training length. B0's
+  seams stay bad (1.46): the seam problem without a plan is not a sampling-noise effect.
+- The final model (G=5 + halo 4) was only trained on Kaggle. It is being trained locally (seed 0) and swept at
+  1.0 / 0.9 / 0.8 at M=4 and M=6, with B2, Ours G=3 + halo 4 and B0 at M=6 and temperature 0.8, to test whether B2's
+  M=6 collapse survives lower temperature.
+
 ## 2026-11-20: Second seed of the main models (Kaggle Version 7, `kaggle/run_seed.sh`, `--seed 1`)
 
 Same recipe; all four runs share one Kaggle encoding, so their NLL is comparable with each other (and with the
