@@ -65,6 +65,8 @@ few = [8, 16, 32, 64, 96, 128]                       # 6 levels (hypothetical to
 scen = [
     ("Block-NCM G=3 (current)", dict(levels=TS, G=3)),
     ("Block-NCM G=6", dict(levels=TS, G=6)),
+    ("G=3 + halo h=4 (paper model)", dict(levels=TS, G=3, halo=4)),
+    ("G=5 + halo h=4 (paper model)", dict(levels=TS, G=5, halo=4)),
     ("G=3 + halo h=8", dict(levels=TS, G=3, halo=8)),
     ("G=3 + half-depth levels 7-11", dict(levels=TS, G=3, depth=half_fine)),
     ("G=2 + 6 levels [8..128]", dict(levels=few, G=2)),

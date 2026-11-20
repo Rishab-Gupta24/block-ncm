@@ -2,6 +2,30 @@
 
 Hardware: RTX 5050 Laptop GPU (8 GB), WSL2 Ubuntu 24.04, PyTorch 2.11.0+cu128.
 
+## Current summary (2026-11-20): G sets a trade-off between trained-length quality and length robustness
+
+| operating point | M=4 genPPL / seams (3 seeds) | M=6 genPPL, all samples (3 seeds) | M=6, samples > 576 tokens | chunk-1 shift, M=4 → M=6 | role |
+|---|---|---|---|---|---|
+| B0 (G=0) | 24.2 / 1.49 | 23.8 | too few long samples | 0% | no plan: length-robust but worst text and seams |
+| **G=3 + halo 4** | 21.1 / 1.20 | 21.2 | **22.5** | **+6%** | length-robust operating point |
+| **G=5 + halo 4** | 19.2 / 1.14 | **20.6** | 30.8 † | +35% † | near-B2 quality at M=4, partial damage at M=6 |
+| B2 (G=11) | **18.7 / 1.12** | 31.3 | 49.8 | +71% | best at M=4, collapses at M=6 |
+
+† From the local G=5 + halo 4 run, whose full M=6 score (25.2) was worse than all three Kaggle seeds (20.0, 21.0,
+20.8). The Kaggle runs' samples are not stored locally, so G=5's long-sample and per-chunk damage is measured only
+on its weakest seed. Long-sample and chunk-1 columns: one training seed, temperature 1.0.
+
+- More global levels give better text at the trained length and worse text beyond it. The order is monotonic in G
+  on every M=6 measure. Chunk 1 lies entirely within tokens 0–127, so its shift cannot come from stories ending
+  early. The plan degrades when it spans more chunks than in training.
+- Speed: measured on the RTX 5050 against TinyStories-33M (68.5M parameters, Hugging Face `generate`), 16.6×
+  faster at batch 1 and 2.3× at batch 32. The 7B/H100 cost model is a separate, analytic estimate: 26–27× at
+  batch 1 for the halo-4 models, with AR cheaper from batch 31. In that model the halo-4 models are about 5%
+  slower than B2 (0.40 vs 0.38 s), because halo positions add queries. The measured batch-32 advantage on the
+  small models reflects per-token overhead in the AR loop, which a 7B model on an H100 would not have.
+- Limits: B2 is 0.5 genPPL better at M=4. TinyStories-33M writes about 2× better text at 512 tokens, partly due to
+  style. About 2 genPPL of recipe cost on single chunks remains unexplained.
+
 ## 2026-11-19: Milestone 1, reproduce the released TinyStories model
 
 `python evaluate.py --config config/eval/tinystories.yaml --checkpoint-dir checkpoints/tinystories`
@@ -278,8 +302,8 @@ What this shows:
   higher on real text. Part of the AR gap is therefore style, not quality.
 - **Speed:** 11 sequential passes vs about 462 for AR at matched length (one per token). Measured latency favours Block-NCM (0.08 s/sample on a T4 at
   batch 32 vs 0.24 s for AR on the RTX 5050 at batch 64) even though the AR model is smaller, but the AR side uses
-  unoptimised Hugging Face `generate`, so this is indicative only. The 7B cost model (26.5× faster at batch 1, AR
-  cheaper from batch 32) remains the cost estimate.
+  unoptimised Hugging Face `generate`, so this is indicative only. The 7B cost model (26–27× faster at batch 1 for
+  the two halo-4 models, AR cheaper from batch 31) remains the cost estimate.
 - **Same-GPU timing (preliminary, RTX 5050, 2026-11-20 04:01, `experiments/time_gen.py`).** Block-NCM G=5 + halo 4
   (M=4, 512 tokens, 11 passes plus decode to tokens, bf16) vs TinyStories-33M (517 tokens, KV cache, bf16, HF
   `generate`), median of 5 runs:
@@ -597,6 +621,8 @@ assumed.
 |---|---|---|---|---|---|
 | Block-NCM G=3 (current) | 5.00 | 0.369 s | 29× | 0.125 | 34 |
 | Block-NCM G=6 | 5.00 | 0.374 s | 29× | 0.127 | 34 |
+| **G=3 + halo h=4 (paper model)** | 5.50 | 0.406 s | 26× | 0.138 | 31 |
+| **G=5 + halo h=4 (paper model)** | 5.38 | 0.400 s | 27× | 0.136 | 31 |
 | G=3 + halo h=8 | 6.00 | 0.443 s | 24× | 0.150 | 28 |
 | G=3 + half-depth levels 7–11 | 3.17 | 0.234 s | 46× | 0.079 | 59 |
 | G=2 + 6 levels (8, 16, 32, 64, 96, 128) | 2.69 | 0.198 s | 54× | 0.067 | 74 |
