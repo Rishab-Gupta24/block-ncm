@@ -172,8 +172,23 @@ What this shows:
   Python and kernel-launch overhead for a 4-layer model). Batch 32: only 1.3× faster per sample, since NCM is
   compute-bound and AR's per-step overhead is shared across the batch. The same pattern as the 7B cost model.
   Caveat: the codes-only Block-NCM timing at batch 1 (0.60 s) came out above codes + decode (0.45 s), so the first
-  timed configuration was not warmed up. A rerun with 3 warm-ups and 10 repeats is queued after the temperature
-  sweep.
+  timed configuration was not warmed up.
+- **Rerun on an idle GPU (3 warm-ups, median of 10, 04:30):**
+
+  | model | batch | codes s | total s | s per sample |
+  |---|---|---|---|---|
+  | Block-NCM G=5 + halo 4 | 1 | 0.41 | 0.43 | 0.43 |
+  | Block-NCM G=5 + halo 4 | 32 | 2.98 | 7.63 | 0.238 |
+  | TinyStories-33M | 1 | — | 6.66 | 6.66 |
+  | TinyStories-33M | 32 | — | 6.89 | 0.215 |
+
+  Batch 1: 15× faster. At batch 32, decoding codes to tokens took 4.6 s of the 7.6 s, which made Block-NCM slightly
+  slower than AR overall. That decode cost is an artefact: the tokenizer decoder (one transformer block and the
+  output layer) was run in fp32, which hits a slow path on this GPU. `experiments/profile_decode.py` measured,
+  under the same GPU contention, 92.5 s in fp32 vs 0.014 s under autocast. The code-to-latent lookup takes 0.09 s.
+  `time_gen.py` now decodes under autocast, as the generator does, and checks token agreement with the fp32 decode.
+  Generator passes alone are 2.3× faster than AR at batch 32 (0.093 vs 0.215 s per sample). The final rerun is
+  queued after the local G=5 + halo 4 job.
 
 ## 2026-11-19: Sentence-aligned chunks and plan-only adapters (local, one seed)
 
