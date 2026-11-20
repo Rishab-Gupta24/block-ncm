@@ -160,6 +160,17 @@ halo 4: 1.946).
   20.0, 21.0, 20.8) but 25.2 in the one local run (local encoding, bf16), so treat it as less robust than G=3.
 - At M=4, G=3 + halo 4 trails G=5 and B2 by about 1–1.5 genPPL at every temperature.
 
+## 2026-11-20: Plan search on G=5 + halo 4 (local run, `sample_eval.py --n-plans 8`, M=4, 2 seeds × 256)
+
+| | genPPL | entropy | mean tokens | seam ratio |
+|---|---|---|---|---|
+| G=5 + halo 4, local run | 19.38 ± 0.29 | 4.357 | 413 | 1.166 |
+| + plan search (8 plans) | **17.07 ± 0.11** | 4.318 | 406 | 1.155 |
+
+- Plan search gains 2.3 genPPL (−12%) on G=5, more than on G=3 + halo 4 (21.0 → 20.0). Entropy and length fall only
+  slightly, so it is not simply picking shorter or blander stories.
+- Latency (0.22 s per sample at batch 8) is not comparable with the plain run (0.056 s at batch 64).
+
 ## 2026-11-20: Matched per-chunk test, M=4 vs M=6 (`experiments/score_chunks.py`, local seed-0 runs, 512 samples)
 
 This compares the same positions under both lengths, which removes the length confound above. Chunk m (m = 1..4)

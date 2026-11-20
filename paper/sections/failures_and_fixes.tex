@@ -4,7 +4,7 @@
 
 This appendix records, model by model, every failure we hit, the evidence for it, the diagnosis, and what
 fixed it. Unresolved failures are reported as such. All runs fine-tune the released TinyStories NCM
-(88.6M parameters, 11 target levels, 641 codes per 128-token chunk) on $M{=}4$ chunks (512 tokens) for 1{,}500
+(11 target levels, 641 codes per 128-token chunk) on $M{=}4$ chunks (512 tokens) for 1{,}500
 steps of 8 documents. NLL is measured on all 1{,}228 validation documents with padding masked. genPPL uses
 GPT-2 Large, $2$ seeds $\times$ 256 samples, temperature 1.0. The \emph{boundary ratio} is the genPPL of 64-token
 windows across a chunk seam divided by that of windows inside a chunk (real text: 1.01).
@@ -186,12 +186,13 @@ cache of the matching global layer.
         \end{itemize}
 \end{itemize}
 \textbf{Not fixed.} Depth reduction is left to follow-up work. Block-NCM's serving-cost claims are therefore
-restricted to low batch sizes (Sec.~\ref{sec:complexity}).
+restricted to low batch sizes (Appendix~\ref{sec:cost}).
 
 \subsection{Summary}
-\begin{table}[h]
+\begin{table}[!ht]
 \centering
 \small
+\caption{Failures and fixes, by model.}
 \begin{tabular}{p{2.6cm}p{4.2cm}p{4.2cm}p{2.2cm}}
 \toprule
 model / part & failure & fix & status \\
