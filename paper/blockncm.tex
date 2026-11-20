@@ -18,8 +18,9 @@
 
 \title{\textbf{Block-NCM: Long Stories in a Constant Number of Parallel Passes}}
 \author{Rishab Gupta}
-\date{Draft, 20 November 2026}
+\date{Draft, 21 November 2026}
 
+\raggedbottom
 \begin{document}
 \maketitle
 
@@ -31,8 +32,9 @@ chunks keeps 11 passes but, as we show, fits the trained length and collapses be
 \emph{Block-NCM}: the first $G$ coarse levels form a story plan shared by all chunks, the remaining levels are
 local to each chunk, and a small \emph{halo} lets local levels see a few positions of each neighbour. Any number of
 chunks still takes 11 passes. Fine-tuned from the released TinyStories NCM on 512-token stories, Block-NCM writes a
-story 16.6$\times$ faster than a smaller (68.5M-parameter) autoregressive (AR) model at batch size 1 on the same GPU
-(2.3$\times$ at batch 32). At the trained length it is within 0.5--2.4 genPPL of fully global attention, with
+story 16.5$\times$ faster than a smaller (68.5M-parameter) autoregressive (AR) model at batch size 1 on the same GPU
+(3.2$\times$ at batch 32). Its batch-1 latency stays at about 0.37\,s from 256 to 1024 tokens, while generating the
+chunks one after another becomes up to 9.4$\times$ slower. At the trained length it is within 0.5--2.4 genPPL of fully global attention, with
 better NLL. At 1.5$\times$ the trained length fully global attention degrades from 18.7 to 31.3 genPPL over three
 seeds, while Block-NCM with $G{=}3$ stays at 21.2. A matched per-chunk test shows the collapse starts in the first
 chunk and grows with the number of global levels. Block-NCM's text remains about 2$\times$ worse than the AR model's
@@ -63,8 +65,9 @@ Block-NCM sits between the two: only the coarse levels, which carry topic and ch
 \begin{enumerate}
   \item \textbf{Block-NCM}, a chunked NCM whose coarse levels form a shared plan and whose fine levels are local
         with a small halo. It takes 11 sequential passes for any number of chunks (Section~\ref{sec:method}).
-  \item \textbf{Measured speed}: 16.6$\times$ faster than an AR model at batch 1 and 2.3$\times$ at batch 32 on the
-        same GPU (Section~\ref{sec:speed}).
+  \item \textbf{Measured speed}: 16.5$\times$ faster than an AR model at batch 1 and 3.2$\times$ at batch 32 on the
+        same GPU, and batch-1 latency that does not grow with story length, unlike chunks generated in sequence
+        (2.1--9.4$\times$ slower from 256 to 1024 tokens) (Section~\ref{sec:speed}).
   \item \textbf{A quality--robustness trade-off in $G$}: more global levels give better text at the trained length
         and worse text beyond it, with fully global attention at the extreme. A matched per-chunk test locates the
         failure in the plan itself (Section~\ref{sec:length}).
@@ -165,29 +168,46 @@ GPT-Neo trained on TinyStories; at 128 tokens it scores 9.68, close to the NCM p
 \begin{figure}[t]
   \centering
   \includegraphics[width=\columnwidth]{figures/fig_speed.pdf}
-  \caption{Wall-clock time per 512-token story on one RTX~5050 laptop GPU (median of 10 runs after 3 warm-ups).
-  Block-NCM time includes decoding codes to tokens. The AR model uses Hugging Face \texttt{generate} with a KV
-  cache, sampling exactly 517 GPT-Neo tokens ($\approx$512 BPE tokens).}
+  \caption{Wall-clock time on one RTX~5050 laptop GPU (8\,GB; median of 10 runs after 3 warm-ups; Block-NCM is
+  $G{=}5$, $h{=}4$, and its time includes decoding codes to tokens). (a) Batch 1, stories of 2, 4 and 8 chunks.
+  B1 is timed as $M$ single-chunk generations in sequence, a lower bound (see text); labels give B1's time over
+  Block-NCM's. (b) 512-token stories; labels give AR's time over Block-NCM's. The AR model uses Hugging Face
+  \texttt{generate} with a KV cache, sampling exactly 517 GPT-Neo tokens ($\approx$512 BPE tokens).}
   \label{fig:speed}
 \end{figure}
 
-Figure~\ref{fig:speed} compares Block-NCM ($G{=}5$, $h{=}4$) with TinyStories-33M generating the same length. At
-batch 1, Block-NCM takes 0.38\,s per story and the AR model 6.24\,s: \textbf{16.6$\times$ faster}. At batch 32 the
-ratio falls to \textbf{2.3$\times$} (0.086 vs 0.201\,s per story), because Block-NCM is compute-bound while the AR
-model's per-token overhead is shared across the batch. Block-NCM's network is larger than the AR model (a 546\,MB
-fp32 checkpoint against 274\,MB), so the speed comes from making 11 passes instead of about 517, not from a smaller
-model.
+\paragraph{Against an AR model.} Figure~\ref{fig:speed}b compares Block-NCM with TinyStories-33M generating the
+same length. At batch 1, Block-NCM takes 0.38\,s per story and the AR model 6.20\,s: \textbf{16.5$\times$ faster}.
+The ratio falls with batch size, to 10.8$\times$ at batch 8, 6.0$\times$ at 16 and \textbf{3.2$\times$ at 32}
+(0.063 vs 0.202\,s per story). Block-NCM is compute-bound from batch 16, while the AR loop's time per batch stays at
+6.0--6.5\,s from batch 1 to 32, so its per-token overhead is shared across the batch and AR would overtake
+Block-NCM at some larger batch. Block-NCM's network is larger than the AR model (a 546\,MB fp32 checkpoint against
+274\,MB), so the speed comes from making 11 passes instead of about 517, not from a smaller model.
 
-Two details matter for a fair comparison. First, the AR side uses unoptimised \texttt{generate} without CUDA graphs
-or fused kernels, so the batch-1 ratio is an upper bound; AR timings varied between 6.2 and 8.1\,s across runs.
-Second, the tokenizer's decoder must run with TF32 or fp16 matrix multiplies: in plain fp32 it hits a slow path that
-takes 4.2\,s at batch 32. We run the code lookup in fp32 and the decoder in fp16, which matches the fp32 output on
-99.96\% of tokens.
+\paragraph{Against chunks in sequence (B1).} B1 has no trained model of its own, but latency does not depend on the
+weights, so we time it as $M$ single-chunk generations of the released NCM run one after another (11 passes each)
+plus decoding. A real B1 would also attend to the text before each chunk, which makes every pass longer, so this
+is a lower bound on its time. At batch 1 (Figure~\ref{fig:speed}a), Block-NCM's latency stays at 0.36--0.39\,s
+from 256 to 1024 tokens, while B1's grows linearly from 0.80 to 3.56\,s: \textbf{2.1$\times$, 4.3$\times$ and
+9.4$\times$ slower} for 2, 4 and 8 chunks (an earlier run gave 2.3$\times$, 4.8$\times$ and 7.8$\times$). At
+batch 8 B1 is 2.1--3.3$\times$ slower. At batch 32 the two tie (1.0--1.1$\times$): both process the same number
+of chunk positions per pass, and the GPU is saturated. Block-NCM's gain over B1 is latency, not throughput.
+
+Three details matter for a fair comparison. First, the AR side uses unoptimised \texttt{generate} without CUDA
+graphs or fused kernels, so the batch-1 ratio is an upper bound; AR timings varied between 6.2 and 8.1\,s across
+runs. Second, the tokenizer's decoder must run with TF32 or fp16 matrix multiplies: in plain fp32 it hits a slow
+path that takes 4.2\,s at batch 32. We run the code lookup in fp32 and the decoder in fp16, which matches the fp32
+output on 99.96\% of tokens. Third, memory: with PyTorch's default allocator, Block-NCM at batch 32 reserved
+8.6\,GiB for 512 tokens, although it allocated only 3.6\,GiB, and the excess spilled into system memory, which
+slowed it by about 50\%. All timings use expandable allocator segments, which keep it at 3.8\,GiB. A 1024-token
+batch of 32 does not fit in 8\,GB.
 
 \paragraph{At 7B scale (estimate).} A roofline cost model with both models at 7B parameters on an H100
 (Appendix~\ref{sec:cost}) predicts 26--27$\times$ lower batch-1 latency than an AR model for 2,048-token outputs,
-with AR becoming cheaper per token from batch 31. The same model puts generating chunks one after another (B1)
-about 2.3$\times$ slower than Block-NCM at batch 1. Block-NCM processes about 5.4 positions per output token, so
+with AR becoming cheaper per token from batch 31. The same model puts B1 about 2.3$\times$ slower than Block-NCM at
+batch 1 at 2,048 tokens, less than we measure on the small model: at 7B a pass over all 16 chunks is compute-bound
+and costs several single-chunk passes, whereas on the small GPU-underfilling model a pass over 8 chunks costs
+about the same as a pass over one. Block-NCM processes about 5.4 positions per output token, so
 high-throughput serving favours AR; the case for Block-NCM is low-batch, latency-bound generation. In this model
 Block-NCM is about 5\% slower than B2, because halo positions add queries.
 
@@ -412,7 +432,8 @@ A parallel drafter of this kind is a natural use for Block-NCM.
   \item \textbf{Quality.} Block-NCM's text is about 2$\times$ worse than an AR model's by genPPL, and B2 is 0.5 better
         at the trained length. Improving quality is the subject of follow-up work: training on stories of all
         lengths, on mixed numbers of chunks, longer schedules, sequence-level distillation from an AR
-        model~\cite{seqkd}, test-time selection (plan search already gives $-$2.3 genPPL), and use as a drafter for
+        model~\cite{seqkd}, test-time selection (on our weakest $G{=}5$ run, plan search with 8 plans gives $-$2.3 genPPL and
+        best-of-8 reranking with TinyStories-33M as the scorer $-$3.6, at 8$\times$ the generation cost), and use as a drafter for
         an AR verifier.
   \item \textbf{Scale.} One dataset, one 128-token base model, 1,500 fine-tuning steps, lengths up to 768 tokens.
         The original NCM recipe (batch 2,048, 50k updates) does not fit on our 8\,GB GPU.
@@ -428,8 +449,8 @@ A parallel drafter of this kind is a natural use for Block-NCM.
 % =====================================================================
 \section{Conclusion}
 
-Block-NCM generates multi-chunk stories in the same 11 parallel passes that NCM uses for one chunk, 16.6$\times$
-faster than a smaller AR model at batch 1 on the same GPU. Sharing only the coarse levels across chunks, with a small halo
+Block-NCM generates multi-chunk stories in the same 11 parallel passes that NCM uses for one chunk, 16.5$\times$
+faster than a smaller AR model at batch 1 on the same GPU, with latency that does not grow with story length. Sharing only the coarse levels across chunks, with a small halo
 at the seams, nearly matches fully global attention at the trained length and avoids its collapse beyond it. The
 number of shared levels sets a clear trade-off between quality at the trained length and robustness to length.
 

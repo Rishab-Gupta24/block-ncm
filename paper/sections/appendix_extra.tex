@@ -43,8 +43,10 @@ Block-NCM $G{=}5$, $h{=}4$ & 5.38 & 0.40\,s & 27$\times$ & 31 \\
 \end{tabular}
 \end{table}
 
-At batch 1 every NCM variant is limited by loading weights, and B1 is about 2.3$\times$ slower than Block-NCM
-with halo because it makes $M$ times as many passes, each over fewer positions. At large batch NCM is compute-bound: it processes about 5 positions per
+At batch 1, B1's $11M{=}176$ passes each cover one chunk and are limited by loading the weights, while Block-NCM's
+11 passes cover all 2,048 positions and are compute-bound; B1 ends up about 2.3$\times$ slower than Block-NCM
+with halo. On the small model, where kernel-launch overhead (ignored here) dominates every pass, we measure
+2.1--9.4$\times$ (Section~\ref{sec:speed}). At large batch NCM is compute-bound: it processes about 5 positions per
 output token, so an AR model becomes cheaper per token from about batch 31. Without grouped-query attention the AR
 model's KV cache (1.07\,GB per sequence) caps it below batch 64 on 80\,GB, and Block-NCM is cheaper at every feasible
 batch. Block-NCM and B2 differ little at this size: attention is a small share of FLOPs at $d{=}4096$, and the

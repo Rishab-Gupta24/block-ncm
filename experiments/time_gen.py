@@ -7,7 +7,7 @@ checkpoint needed). Reported per batch and per sample, median of --reps timed ru
   AR          Hugging Face generate with KV cache, fp16/bf16, exactly --ar-tokens new tokens (end-of-text blocked;
               517 GPT-Neo tokens is about 512 BPE-8192 tokens on TinyStories)
 
-    python experiments/time_gen.py --batches 1,32
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True python experiments/time_gen.py --batches 1,8,16,32
 """
 import argparse
 import json
@@ -38,7 +38,13 @@ AMP = amp_dtype(a.amp)
 bs = [int(x) for x in a.batches.split(",")]
 
 
+def peak_gib():
+    return torch.cuda.max_memory_reserved() / 2**30
+
+
 def timed(fn, reps, warmup=3):
+    # Reserved memory above the GPU's size spills to system RAM under WSL2 and slows the run; rows record the peak.
+    torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats()
     for _ in range(warmup):  # one warm-up was not enough: the first-timed config read slow (clock ramp, allocator)
         fn()
     torch.cuda.synchronize()
@@ -83,7 +89,7 @@ print(f"decoder token agreement, autocast vs fp32: {agree:.5f}", flush=True)
 for B in bs:
     tc, tt = timed(lambda: ncm_codes(B), a.reps), timed(lambda: ncm_total(B), a.reps)
     res["rows"].append({"model": f"Block-NCM G={a.G} halo {a.halo}", "batch": B, "tokens": a.M * C,
-                        "codes_s": tc, "total_s": tt, "total_s_per_sample": tt / B})
+                        "codes_s": tc, "total_s": tt, "total_s_per_sample": tt / B, "reserved_gib": peak_gib()})
     print(res["rows"][-1], flush=True)
 del ncm, net
 torch.cuda.empty_cache()
@@ -105,11 +111,13 @@ def ar_gen(B):
 for B in bs:
     t = timed(lambda: ar_gen(B), a.reps)
     res["rows"].append({"model": f"AR {a.ar_model.split('/')[-1]} ({dt})", "batch": B, "tokens": a.ar_tokens,
-                        "total_s": t, "total_s_per_sample": t / B})
+                        "total_s": t, "total_s_per_sample": t / B, "reserved_gib": peak_gib()})
     print(res["rows"][-1], flush=True)
 
-print("\n| model | batch | codes s | s per batch | s per sample |\n|---|---|---|---|---|")
+res["gpu_gib"] = torch.cuda.mem_get_info()[1] / 2**30
+print("\n| model | batch | codes s | s per batch | s per sample | reserved GiB |\n|---|---|---|---|---|---|")
 for r in res["rows"]:
     c = f"{r['codes_s']:.3f}" if "codes_s" in r else "—"
-    print(f"| {r['model']} | {r['batch']} | {c} | {r['total_s']:.3f} | {r['total_s_per_sample']:.4f} |")
+    print(f"| {r['model']} | {r['batch']} | {c} | {r['total_s']:.3f} | {r['total_s_per_sample']:.4f} | "
+          f"{r['reserved_gib']:.1f} |")
 json.dump(res, open(os.path.expanduser(a.out), "w"), indent=2)

@@ -18,8 +18,10 @@ on its weakest seed. Long-sample and chunk-1 columns: one training seed, tempera
 - More global levels give better text at the trained length and worse text beyond it. The order is monotonic in G
   on every M=6 measure. Chunk 1 lies entirely within tokens 0–127, so its shift cannot come from stories ending
   early. The plan degrades when it spans more chunks than in training.
-- Speed: measured on the RTX 5050 against TinyStories-33M (68.5M parameters, Hugging Face `generate`), 16.6×
-  faster at batch 1 and 2.3× at batch 32. The 7B/H100 cost model is a separate, analytic estimate: 26–27× at
+- Speed: measured on the RTX 5050 against TinyStories-33M (68.5M parameters, Hugging Face `generate`), 16.5×
+  faster at batch 1, 10.8× at 8, 6.0× at 16 and 3.2× at 32 (2026-11-21 re-timing without memory spill; the
+  earlier 2.3× at batch 32 was slowed by spilling). Against B1 (chunks in sequence, lower bound) at batch 1:
+  2.1× / 4.3× / 9.4× faster at 256 / 512 / 1024 tokens, tied at batch 32. The 7B/H100 cost model is a separate, analytic estimate: 26–27× at
   batch 1 for the halo-4 models, with AR cheaper from batch 31. In that model the halo-4 models are about 5%
   slower than B2 (0.40 vs 0.38 s), because halo positions add queries. The measured batch-32 advantage on the
   small models reflects per-token overhead in the AR loop, which a 7B model on an H100 would not have.
@@ -160,6 +162,61 @@ halo 4: 1.946).
   20.0, 21.0, 20.8) but 25.2 in the one local run (local encoding, bf16), so treat it as less robust than G=3.
 - At M=4, G=3 + halo 4 trails G=5 and B2 by about 1–1.5 genPPL at every temperature.
 
+## 2026-11-21: Measured B1 latency vs Block-NCM (`experiments/time_b1.py`, RTX 5050 8 GB, median of 10 runs)
+
+B1 (chunks one after another) has no trained model, and latency does not depend on the weights, so B1 is timed as
+M sequential single-chunk generations (11 passes each) plus decoding with the released generator. A real B1 would
+also attend to the text before each chunk, so these are **lower bounds** on B1's time. Block-NCM is G=5 + halo 4.
+Final run (`~/ncm/runs/time_b1_v3.json`) uses `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` and empties the
+allocator cache before each row; "reserved" is the peak memory PyTorch held (GPU: 7.96 GiB).
+
+| M | tokens | batch | Block-NCM s | B1 lower bound s | B1 / Block-NCM | reserved GiB (Block / B1) |
+|---|---|---|---|---|---|---|
+| 2 | 256 | 1 | 0.386 | 0.797 | **2.1×** | 0.8 / 0.8 |
+| 4 | 512 | 1 | 0.360 | 1.556 | **4.3×** | 0.9 / 0.8 |
+| 8 | 1024 | 1 | 0.378 | 3.559 | **9.4×** | 1.0 / 0.8 |
+| 2 | 256 | 8 | 0.385 | 0.791 | 2.1× | 1.2 / 0.9 |
+| 4 | 512 | 8 | 0.556 | 1.639 | 2.9× | 1.6 / 0.9 |
+| 8 | 1024 | 8 | 1.093 | 3.597 | 3.3× | 3.0 / 0.9 |
+| 2 | 256 | 32 | 0.944 | 1.001 | 1.1× | 2.2 / 1.4 |
+| 4 | 512 | 32 | 2.009 | 2.054 | 1.0× | 3.8 / 1.4 |
+| 8 | 1024 | 32 | out of memory | | | > 8 |
+
+- **At batch 1, Block-NCM's latency does not grow with story length (0.36–0.39 s from 256 to 1024 tokens) while
+  B1's grows linearly (0.80 → 3.56 s).** This is the constant-pass property measured on hardware. Batch-1 ratios
+  move between runs: an earlier run without expandable segments gave 2.3× / 4.8× / 7.8× (Block-NCM 0.32 / 0.34 /
+  0.44 s). The 7B cost model's 2.3× for B1 at batch 1 is conservative for this small model, where every pass is
+  latency-bound.
+- At batch 8 B1 is still 2.1–3.3× slower. At batch 32 both process the same number of chunk positions per pass
+  (Block-NCM all chunks at once, B1 one chunk per step), and with a saturated GPU they tie (1.0–1.1×). Block-NCM's
+  advantage over B1 is latency, not throughput.
+- **Memory.** Without expandable segments, Block-NCM at batch 32 reserved 8.6 GiB (M=4) and 14.2 GiB (M=8), above
+  the GPU's 7.96 GiB, and WSL2 silently spilled to system RAM: M=4 took 2.96 s and M=8 20–25 s. Peak *allocated*
+  memory at M=4 was only 3.6 GiB, so the excess was allocator fragmentation (`experiments/mem_probe.py`: M=6 batch 32
+  reserved 12.4 GiB, allocated 5.8). With expandable segments M=4 reserves 3.8 GiB; M=8 at batch 32 needs about
+  8.6 GiB allocated and does not fit.
+- Consequence for the AR comparison: `time_gen4.json`'s batch-32 Block-NCM row (M=4, 2.74 s) was measured in the
+  spilling regime, so its 2.3× understated Block-NCM. Re-timed below.
+
+## 2026-11-21: Block-NCM vs AR re-timed without memory spill (`experiments/time_gen.py`, `time_gen5.json`)
+
+Same harness as `time_gen4.json` (M=4, 512 tokens, G=5 + halo 4; AR = TinyStories-33M with HF `generate`, KV
+cache, exactly 517 tokens; median of 10 after 3 warm-ups), now with `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+and the allocator cache emptied before each row. Every row fits in the 7.96 GiB GPU.
+
+| batch | Block-NCM s per batch | AR s per batch | Block-NCM s per story | AR s per story | Block-NCM faster by | reserved GiB (Block / AR) |
+|---|---|---|---|---|---|---|
+| 1 | 0.376 | 6.201 | 0.376 | 6.201 | **16.5×** | 0.9 / 0.4 |
+| 8 | 0.564 | 6.080 | 0.0705 | 0.760 | **10.8×** | 1.6 / 0.5 |
+| 16 | 1.001 | 5.973 | 0.0626 | 0.373 | **6.0×** | 2.3 / 0.6 |
+| 32 | 2.008 | 6.476 | 0.0627 | 0.202 | **3.2×** | 3.8 / 0.7 |
+
+- **Batch 32 is 3.2×, not 2.3×.** The old row (2.74 s) was slowed by spilling; with expandable segments the same
+  generation reserves 3.8 GiB instead of 8.6 and takes 2.01 s. Batch 1 is unchanged (16.5× vs 16.6×).
+- Block-NCM is compute-bound from batch 16 (0.063 s per story at 16 and 32). AR's time per batch is flat from 1 to
+  32 (6.0–6.5 s), so the AR loop is still overhead-bound and its per-story cost keeps falling with batch: the gap
+  narrows and AR would win at some larger batch. Not measured beyond 32.
+
 ## 2026-11-20: Plan search on G=5 + halo 4 (local run, `sample_eval.py --n-plans 8`, M=4, 2 seeds × 256)
 
 | | genPPL | entropy | mean tokens | seam ratio |
@@ -170,6 +227,31 @@ halo 4: 1.946).
 - Plan search gains 2.3 genPPL (−12%) on G=5, more than on G=3 + halo 4 (21.0 → 20.0). Entropy and length fall only
   slightly, so it is not simply picking shorter or blander stories.
 - Latency (0.22 s per sample at batch 8) is not comparable with the plain run (0.056 s at batch 64).
+
+## 2026-11-20: Best-of-K reranking on G=5 + halo 4 (`experiments/rerank_bestofk.py`, Paper 2 material)
+
+Pool: 2 seeds × 1024 plain samples from the same local G=5 + halo 4 run (M=4, T=1.0; pool genPPL 19.55 ± 0.15).
+Samples are grouped K at a time within each seed. The pick in each group is the sample with the lowest mean NLL
+under **TinyStories-33M** (an independent small AR model, not the GPT-2 Large judge, so the rerank is not
+circular). "First" is the first sample of each group, i.e. no reranking on the same subset.
+
+| K | n groups | genPPL first → picked | entropy | mean tokens | distinct-4 | seam ratio |
+|---|---|---|---|---|---|---|
+| 1 | 2048 | 19.55 → 19.55 | 4.356 → 4.356 | 413 → 413 | 0.967 → 0.967 | 1.162 → 1.162 |
+| 2 | 1024 | 19.47 → **17.80** | 4.354 → 4.335 | 412 → 410 | 0.966 → 0.964 | 1.163 → 1.163 |
+| 4 | 512 | 19.31 → **16.60** | 4.353 → 4.321 | 412 → 407 | 0.966 → 0.962 | 1.172 → 1.158 |
+| 8 | 256 | 19.27 → **15.68** | 4.348 → 4.305 | 407 → 403 | 0.966 → 0.960 | 1.182 → 1.142 |
+
+- **Best-of-8 gains 3.6 genPPL (−19%)**, more than plan search with 8 plans (19.38 → 17.07, −12%). Entropy falls
+  by 0.04 and length by 4 tokens, the same small drift as plan search, so the gain is not mostly from shorter or
+  blander stories. Distinct-4 stays at 0.96. Seams get slightly better (1.18 → 1.14), not worse.
+- **Cost is the catch.** Plan search samples 8 plans for the G=5 global levels only (batched), keeps the one the
+  model itself finds most likely, and runs the 6 local levels once; it needs no second model. Best-of-K pays for K
+  full generations plus K scorer passes. Our scorer script was slow (0.95 s per sample, unbatched, about 1950 s
+  for 2048 samples), so wall-clock here says nothing about a batched implementation; the fair cost is
+  K × (0.36 s generation + one 33M-parameter AR pass) per kept story.
+- Next for Paper 2 (not run): plan search and best-of-K together, and MBR (NCM App. F.4) instead of an external
+  scorer. All numbers here are from the local seed-0 run, the weakest G=5 run.
 
 ## 2026-11-20: Matched per-chunk test, M=4 vs M=6 (`experiments/score_chunks.py`, local seed-0 runs, 512 samples)
 

@@ -69,32 +69,46 @@ def fig_architecture():
 
 # ------------------------------------------------------------------ Fig. 2: speed
 def fig_speed():
-    # RESULTS.md "Final same-GPU timing" (RTX 5050, 512 tokens, median of 10): seconds per sample
-    # B1 lower bound filled in by make_figures only if measured (see B1 below)
-    # (~/ncm/runs/time_gen4.json, unrounded)
-    data = {"batch 1": {"Block-NCM\nG=5 + halo 4": 0.37589, "TinyStories-33M\n(AR, 68.5M)": 6.24355},
-            "batch 32": {"Block-NCM\nG=5 + halo 4": 0.085613, "TinyStories-33M\n(AR, 68.5M)": 0.200907}}
-    B1 = os.environ.get("B1_TIMES")  # "b1_batch1,b1_batch32" seconds per sample, from time_b1.py
-    if B1:
-        t1, t32 = (float(x) for x in B1.split(","))
-        data["batch 1"]["B1: 4 chunks\nin sequence"] = t1
-        data["batch 32"]["B1: 4 chunks\nin sequence"] = t32
-    fig, axes = plt.subplots(2, 1, figsize=(3.4, 1.0 + 0.55 * 2 * len(data["batch 1"])))
-    for ax, (title, d) in zip(axes, data.items()):
-        names = list(d)
-        cols = [COL["G5"] if n.startswith("Block") else COL["AR"] if "AR" in n else COL["B0"] for n in names]
-        bars = ax.barh(names, [d[n] for n in names], color=cols, height=0.55)
-        base = d["Block-NCM\nG=5 + halo 4"]
-        for b, n in zip(bars, names):
-            v = d[n]
-            ax.text(v * 1.03, b.get_y() + b.get_height() / 2,
-                    (f"{v:.3f} s" if v < 0.1 else f"{v:.2f} s") +("" if n.startswith("Block") else f"  ({v / base:.1f}× slower)"), va="center",
-                    fontsize=7.5)
-        ax.set_xlim(0, max(d.values()) * 1.75)
-        ax.invert_yaxis()
-        ax.set_title(f"{title}: seconds per 512-token story", fontsize=8, loc="left")
-        ax.tick_params(axis="y", labelsize=7.5)
-        ax.tick_params(axis="x", labelsize=7)
+    # RESULTS.md 2026-11-21 (RTX 5050, median of 10, expandable_segments, no memory spill), unrounded:
+    # (a) batch 1 vs story length: ~/ncm/runs/time_b1_v3.json; AR at 517 tokens from ~/ncm/runs/time_gen5.json
+    toks = [256, 512, 1024]
+    block1 = [0.38623, 0.35985, 0.37802]
+    b1 = [0.79732, 1.55583, 3.55903]
+    ar1 = 6.20140
+    # (b) seconds per 512-token story vs batch: ~/ncm/runs/time_gen5.json
+    bs = [1, 8, 16, 32]
+    blk = [0.376373, 0.070453, 0.062550, 0.062750]
+    ar = [6.201404, 0.760047, 0.373304, 0.202377]
+    fig, (a, b) = plt.subplots(2, 1, figsize=(3.4, 4.6))
+    a.plot(toks, b1, "-o", color=COL["B0"], ms=4, lw=1.6, label="B1: chunks in sequence (lower bound)")
+    a.plot(toks, block1, "-o", color=COL["G5"], ms=4, lw=1.6, label="Block-NCM G=5 + halo 4")
+    a.plot([512], [ar1], "*", color=COL["AR"], ms=9, label="TinyStories-33M (AR)")
+    for x, v, w in zip(toks, b1, block1):
+        a.text(x, v + 0.3, f"{v / w:.1f}×", ha="center", fontsize=7.5, color=COL["B0"])
+        a.text(x, w - 0.55, f"{w:.2f} s", ha="center", fontsize=7, color=COL["G5"])
+    a.text(560, ar1, f"{ar1:.2f} s ({ar1 / blk[0]:.1f}× Block-NCM, same run)", va="center", fontsize=7,
+           color=COL["AR"])
+    a.set_xticks(toks, [f"{t}\n({t // 128} chunks)" for t in toks], fontsize=7)
+    a.set_xlim(150, 1250)
+    a.set_ylim(-0.8, 7.4)
+    a.set_ylabel("seconds per story", fontsize=8)
+    a.set_title("(a) Batch 1: latency vs story length", fontsize=8, loc="left")
+    a.legend(fontsize=6.5, loc="upper left", bbox_to_anchor=(0, 0.8), frameon=False)
+    a.tick_params(axis="y", labelsize=7)
+    b.plot(bs, ar, "-*", color=COL["AR"], ms=7, lw=1.6, label="TinyStories-33M (AR)")
+    b.plot(bs, blk, "-o", color=COL["G5"], ms=4, lw=1.6, label="Block-NCM G=5 + halo 4")
+    for x, u, v in zip(bs, blk, ar):
+        b.text(x, (u * v) ** 0.5, f"{v / u:.1f}×", ha="center", va="center", fontsize=7.5,
+               bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none"))
+    b.set_xscale("log", base=2)
+    b.set_xlim(0.75, 42)
+    b.set_yscale("log")
+    b.set_xticks(bs, [str(x) for x in bs], fontsize=7)
+    b.set_xlabel("batch size", fontsize=8)
+    b.set_ylabel("seconds per story", fontsize=8)
+    b.set_title("(b) 512-token stories: time per story vs batch", fontsize=8, loc="left")
+    b.legend(fontsize=6.5, loc="upper right", frameon=False)
+    b.tick_params(axis="y", labelsize=7)
     fig.tight_layout()
     save(fig, "fig_speed")
 

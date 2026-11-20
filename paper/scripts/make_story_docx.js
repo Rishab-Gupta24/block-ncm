@@ -171,12 +171,22 @@ add(note("**B2 (group chat):** … “Ow, ow, ow! That hurts!” Lila cried, pok
 add(H2("The speed race"));
 add(P("Now the part that matters for Paper 1: **speed**. I raced my Block-NCM against TinyStories-33M, a normal AR model trained on the same kind of stories, on the same laptop GPU, both writing a 512-token story."));
 add(P("First run: at batch size 32 my model came out *slower* than the AR model. What?! After profiling, the culprit was tiny and sneaky. The last step that turns codes back into words ran in full 32-bit precision, which hits a slow path on this GPU: **4.2 seconds** for something that should take 0.01. The jugaad fix was half precision for that one step, which still matches the full-precision output on 99.96% of words."));
-add(figure("fig_speed.png", 3.6, "Seconds per 512-token story on my RTX 5050 laptop GPU."));
+add(figure("fig_speed.png", 3.6, "Top: one story at a time, as the story gets longer. Bottom: 512-token stories, as I write more of them at once. My RTX 5050 laptop GPU."));
 add(bullets([
-  "**One story at a time: 0.38 s vs 6.24 s, so Block-NCM is 16.6× faster.**",
-  "**32 stories at once: 2.3× faster** per story. The AR model catches up when it can share its work across many stories.",
+  "**One story at a time: 0.38 s vs 6.20 s, so Block-NCM is 16.5× faster.**",
+  "**8 stories at once: 10.8×. 16 at once: 6.0×. 32 at once: 3.2×.** The AR model catches up when it can share its work across many stories.",
 ]));
 add(P("And my model is actually *bigger* than the AR model (546 MB vs 274 MB). It wins because it makes 11 passes instead of about 517, not because it is smaller."));
+
+add(H2("Day 3 bonus: the race against B1, and the memory leak that wasn’t"));
+add(P("One claim in the paper was still an estimate: that writing the chunks one after another (B1) is slower. So in the early hours of 21 November the laptop raced them while I slept. B1 has no trained model, but speed doesn’t care about the weights, so I just ran the single-paragraph model 2, 4 and 8 times in a row."));
+add(bullets([
+  "**2 chunks:** Block-NCM 0.39 s, B1 0.80 s (2.1× slower)",
+  "**4 chunks:** Block-NCM 0.36 s, B1 1.56 s (4.3× slower)",
+  "**8 chunks:** Block-NCM 0.38 s, B1 3.56 s (**9.4× slower**)",
+]));
+add(P("Look at Block-NCM’s column: it doesn’t move. Two paragraphs or eight, same 11 passes, same time. That flat line is the whole paper in one picture. (And B1’s real times would be even worse, because a real B1 also has to read the earlier chunks.)"));
+add(note("**Plot twist #2:** at 32 stories × 8 chunks, Block-NCM took **25 seconds**. Huh? It turned out PyTorch was hoarding GPU memory in fragments: for 32 stories × 4 chunks it *reserved* 8.6 GB for a job that only *used* 3.6 GB. My laptop GPU has 8 GB, so Windows quietly spilled the rest into normal RAM, which is painfully slow. One setting (expandable_segments) fixed it: the same job now fits in 3.8 GB, and the batch-32 speedup over the AR model went from 2.3× to **3.2×**. My old number had been unfair to my own model! (32 stories × 8 chunks still doesn’t fit in 8 GB. Some limits are real.)"));
 
 add(H2("Solving the 4-point mystery"));
 add(P("Remember the 20.5 vs 16.5 gap from Day 1? Here is the hilarious answer. Long TinyStories are written in a *different style*. **0%** of stories longer than 384 tokens start with “Once upon a time”, against 58% of all stories. The judge model simply finds the long-story style a bit more surprising. When I trained on stories of all lengths instead, single-paragraph quality came back to **17.0** (16.1 with the KL anchor), basically the original model. My recipe was mostly fine. My *data* had a different accent."));
@@ -188,7 +198,8 @@ add(P("Block-NCM writes text that is about **2× worse** than the AR model by th
 add(H1("Final scoreboard"));
 add(table(["Question", "Answer"],
   [["Can NCM write 512-token stories in the same 11 passes?", "!Yes: Block-NCM"],
-   ["How much faster than a normal AR model?", "!16.6× (one story), 2.3× (32 stories)"],
+   ["How much faster than a normal AR model?", "!16.5× (one story), 3.2× (32 stories)"],
+   ["Does it slow down for longer stories?", "!No: 0.36–0.39 s; B1 is up to 9.4× slower"],
    ["Is it as good as the “group chat” design at the trained length?", "Almost: 19.2 vs 18.7"],
    ["What happens one step beyond the trained length?", "!B2 collapses (31.3), Block-NCM holds (21.2)"],
    ["Is the collapse real or a measuring trick?", "Real: even chunk 1 gets 71% worse for B2"],
@@ -199,7 +210,7 @@ add(table(["Question", "Answer"],
 add(H1("What’s next?"));
 add(bullets([
   "**Paper 1 (this one): speed and length.** Next stop: my professor’s desk for checking, then publishing.",
-  "**Paper 2: quality.** I already have a teaser: letting the model sample 8 rough plans and keep the best one improves the score from **19.4 to 17.1** with no extra training. Other ideas on the list: training on stories of all lengths, longer training, and learning from a stronger AR model.",
+  "**Paper 2: quality.** I already have a teaser: letting the model sample 8 rough plans and keep the best one improves the score from **19.4 to 17.1** with no extra training. Writing 8 whole stories and letting a small AR model pick the best gets to **15.7**, but costs 8× the work. Other ideas on the list: training on stories of all lengths, longer training, and learning from a stronger AR model.",
   "**Later:** coding and other domains, once the first papers are checked and published.",
 ]));
 add(P("The biggest lesson? The design that looks best on the test you trained for can be the one that breaks first when the world changes a little. Sometimes the smarter move is to share less, and peek just enough."));
