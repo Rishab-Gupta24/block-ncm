@@ -223,8 +223,14 @@ What this shows:
   output layer) was run in fp32, which hits a slow path on this GPU. `experiments/profile_decode.py` measured,
   under the same GPU contention, 92.5 s in fp32 vs 0.014 s under autocast. The code-to-latent lookup takes 0.09 s.
   `time_gen.py` now decodes under autocast, as the generator does, and checks token agreement with the fp32 decode.
-  Generator passes alone are 2.3× faster than AR at batch 32 (0.093 vs 0.215 s per sample). The final rerun is
-  queued after the local G=5 + halo 4 job.
+  Generator passes alone are 2.3× faster than AR at batch 32 (0.093 vs 0.215 s per sample).
+- **Autocast decode, idle GPU (06:33):** Block-NCM codes 0.37 s, total 0.45 s at batch 1 (AR 8.12 s: 18×). At batch
+  32, codes 2.68 s and total 2.77 s, i.e. 0.087 s per sample (AR 0.227 s: 2.6×). The decoder in fp32 took 4.28 s
+  and under bf16 autocast 0.011 s. **But bf16 decoding changes 9% of output tokens** (agreement with fp32 0.910), so
+  it is not the same decode, and the batch-32 total above is not yet a valid like-for-like number.
+  `experiments/decode_precision.py` (TF32, fp16, bf16, and a kernel profile of the fp32 path) is queued to find a
+  fast decode that matches fp32. Safe claims for now: 15–18× faster at batch 1 including the fp32 decode; generator
+  passes 2.3–2.6× faster per sample at batch 32.
 
 ## 2026-11-19: Sentence-aligned chunks and plan-only adapters (local, one seed)
 
