@@ -39,7 +39,11 @@ frozen released model gives 16.1, the released level within noise. The anchor al
 gives 19.5. \textbf{Mostly resolved:} the residual was largely the data subset, not damage from fine-tuning. The
 $M{=}4$ models must train on long stories, so their absolute genPPL carries this style offset (real long-story
 openings score 1.10$\times$ higher than all openings); the cost is the same for every variant, so comparisons
-between variants remain fair.
+between variants remain fair. The anchor does not carry over to the planned models. The reference sees each chunk
+alone, without the plan or the earlier chunks. At $M{=}4$ it therefore pulls the local levels toward ignoring that
+context. With weight 3 (G3+halo4), NLL rises 1.736$\to$1.895, chunk-4 NLL 1.78$\to$2.20, genPPL 21.0$\to$23.2 and
+the boundary ratio 1.19$\to$1.34. G5+halo4 behaves the same way (genPPL 19.1$\to$25.7). Weighting chunks 2--4 at
+0.3$\times$ reduces the NLL cost but not the generation cost. We keep the unanchored recipe.
 
 \begin{table}[h]
 \centering
@@ -114,7 +118,8 @@ training step is 2.0$\times$ faster on a T4 (1.21\,s vs 2.43\,s).
 \paragraph{O3. Generation quality is still below the released model.}
 Samples keep a coherent plot across all four chunks, but grammar slips are frequent. That is a consequence of F1
 and of model size. Plan-only adapters did not help (below). Under test: lower sampling temperature, and recipe
-changes (unfiltered openings, per-level loss weighting, a KL anchor to the released model).
+changes. Unfiltered openings are not usable at $M{=}4$, per-level loss weighting had no effect, and a KL anchor to
+the released model made the $M{=}4$ models worse (F1).
 \textbf{Open.}
 
 \subsection{Ours with more global levels ($G{=}5$, $G{=}6$)}
@@ -174,7 +179,7 @@ restricted to low batch sizes (Sec.~\ref{sec:complexity}).
 \toprule
 model / part & failure & fix & status \\
 \midrule
-all (recipe) & clean fine-tuning: genPPL 47.7 on single chunks & corruption 0.5, lr $3{\times}10^{-5}$; residual: unfiltered data + KL anchor & 16.1 (released 16.5), mostly fixed \\
+all (recipe) & clean fine-tuning: genPPL 47.7 on single chunks & corruption 0.5, lr $3{\times}10^{-5}$; residual: unfiltered data + KL anchor & 16.1 (released 16.5), mostly fixed; anchor hurts at $M{=}4$ \\
 all (metrics) & padding diluted NLL & mask padding per document & fixed \\
 all (memory) & dense graph $>$ 8\,GB & per-level path ($<10^{-6}$ equal) & fixed \\
 all (fp16) & quantizer NaN, silent & fp32 quantizer, abort on NaN & fixed \\

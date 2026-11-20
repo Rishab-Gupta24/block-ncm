@@ -480,8 +480,39 @@ control), `gate_unf`, `gate_a1`, `gate_kl1`, `gate_all` (unfiltered + α=1 + KL 
 
   The reference model sees each chunk alone with no plan, so the anchor pulls the local levels toward ignoring the
   plan and the earlier chunks. At G=0 single chunks there is nothing to ignore, which is why the gates showed almost
-  no NLL cost. The plan levels also get worse (5.31 vs 5.04), through the shared trunk. Samples (genPPL, seams) and
-  the 0.3×-on-chunks-2–4 variant are still running; whether the fluency gain survives this NLL cost is open.
+  no NLL cost. The plan levels also get worse (5.31 vs 5.04), through the shared trunk.
+- **Final: the KL anchor makes the planned M=4 models worse on every measure, on both G=3 and G=5.** Rejected
+  for the final recipe.
+
+  Local, G=3 + halo 4 (local encoding, non-padding NLL, 1,228 val docs):
+
+  | | B0 | Ours G3+h4 | + anchor 3 | + anchor 3, chunks 2–4 ×0.3 |
+  |---|---|---|---|---|
+  | NLL total | 1.749 | **1.736** | 1.895 | 1.796 |
+  | NLL chunk 1 / 4 | 1.552 / 1.804 | 1.557 / **1.784** | 1.575 / 2.196 | 1.566 / 1.931 |
+  | genPPL M=4 | 24.1 | **21.0** | 23.2 | 28.0 |
+  | boundary ratio M=4 | 1.52 | **1.19** | 1.34 | 1.43 |
+  | entropy M=4 | 4.50 | 4.41 | 4.53 | 4.51 |
+  | genPPL M=6 | — | **21.5** | 23.0 | 29.3 |
+  | boundary ratio M=6 | — | **1.19** | 1.33 | 1.46 |
+
+  Kaggle, G=5 + halo 4 (Kaggle encoding; released model 1.956 as calibration):
+
+  | | Ours G5+h4 | + anchor 3 | + anchor 3, chunks 2–4 ×0.3 |
+  |---|---|---|---|
+  | NLL total | **1.598** | 1.718 | 1.642 |
+  | NLL chunk 4 | — | 1.999 | 1.779 |
+  | genPPL M=4 | **19.1** | 25.7 | 26.0 |
+  | boundary ratio M=4 | **1.14** | 1.37 | 1.34 |
+  | genPPL M=6 | **20.0** | 28.3 | 31.1 |
+  | boundary ratio M=6 | **1.15** | 1.46 | 1.44 |
+
+  Reading: chunk-4 NLL takes the largest hit (1.78 → 2.20 locally), as predicted. The reference treats every chunk
+  as a story opening, which erases the position adaptation. Entropy rises toward the released model's, but the
+  added diversity does not read as fluent text to GPT-2 Large. Weighting chunks 2–4 at 0.3× recovers most of the NLL
+  but none of the generation quality, and its seams get worse still. So the anchor is a single-chunk fix only. The
+  M=4 models keep the unanchored recipe, and their remaining fluency gap is the long-story style offset plus about
+  2 points of recipe cost.
 
 **The long-story subset is a different style of story.** Stories over 384 tokens (our M=4 set, 4.7% of
 TinyStories) never open with "Once upon a time" (0.0% of 2,000 sampled, vs 57.8% of all stories); they open with
