@@ -126,15 +126,25 @@ the released model made the $M{=}4$ models worse (F1).
 More global levels improve generation at the training length: genPPL 20.0 ($G{=}5$) and 19.6 ($G{=}6$) vs 19.0
 for B2. But they \emph{fail to extrapolate}. At $M{=}6$ (trained on $M{=}4$), $G{=}6$ degrades to 30.7 and
 $G{=}5$ to 23.8, while $G{=}3$ holds (21.8). $G{=}6$ also loses on the fine levels (level 6 NLL 1.86 vs 1.68).
-\emph{Fix: add halo.} With halo $h{=}4$, $G{=}5$ goes from 19.05 at $M{=}4$ to 20.5 at $M{=}6$ (means of two seeds),
-the best $M{=}6$ result of any model; B2 goes from 18.7 to 32.3. At $M{=}4$, B2 leads by about 0.4 genPPL and the
-seams tie (boundary ratio 1.14 vs 1.13). $G{=}6$ with halo generates best at $M{=}4$ (18.7) but still degrades at $M{=}6$ (23.6).
-\emph{Resolution:} $G{=}5$ with halo is the final model; $G\ge 6$ learns the training length even with halo.
+\emph{Fix: add halo.} With halo $h{=}4$, $G{=}5$ goes from 19.2 at $M{=}4$ to 20.6 at $M{=}6$ (means of three
+seeds), the best $M{=}6$ score of any model; B2 goes from 18.7 to 31.3. At $M{=}4$, B2 leads by about 0.5 genPPL and
+the seams tie (boundary ratio 1.12 vs 1.14). $G{=}6$ with halo generates best at $M{=}4$ (18.7) but still degrades
+at $M{=}6$ (23.6). One local retraining of $G{=}5$ with halo (local encoding, bf16) reached only 25.2 at $M{=}6$
+against 20.0--21.0 for the three Kaggle seeds. \emph{Resolution:} $G{=}5$ with halo is best at the training length.
+$G{=}3$ with halo (21.1$\to$21.2, three seeds) is the most robust beyond it. $G\ge 6$ learns the training length
+even with halo.
+
+\emph{Caveat on the $M{=}6$ metric.} Samples are scored up to their first end-of-text token. B0 and $G{=}3$ with
+halo mostly end their stories within four chunks at $M{=}6$, while B2 and $G{=}5$ more often run on, so part of the
+$M{=}6$ gap measures ending on time. Scoring only samples longer than 4.5 chunks keeps the ranking ($G{=}3$+halo
+22.5, $G{=}5$+halo 30.8, B2 49.8 at temperature 1.0). Text past the trained length is worse than in-length text for
+every model.
 
 \subsection{B2: fully global ($G{=}11$)}
 B2 generates best at $M{=}4$ but has the \emph{worst} NLL of all runs (1.7780), losing on levels 6--11 and on
 chunk 4. More importantly, it \textbf{collapses beyond the training length}: genPPL 19.0$\to$33.5 at $M{=}6$, and
-18.4$\to$31.0 in a second training seed, with high sampling variance (sd 2.3 and 1.2). Global attention across all chunks appears to fit the training length. This is the
+18.4$\to$31.0 and 18.7$\to$29.4 in two more training seeds, with high sampling variance (sd 2.3 and 1.2). At
+sampling temperature 0.8 it is worse still (57.3). Global attention across all chunks appears to fit the training length. This is the
 baseline's failure, not ours, and it motivates Block-NCM: B2's advantage exists only at the length it was
 trained on.
 
@@ -185,8 +195,8 @@ all (memory) & dense graph $>$ 8\,GB & per-level path ($<10^{-6}$ equal) & fixed
 all (fp16) & quantizer NaN, silent & fp32 quantizer, abort on NaN & fixed \\
 Ours $G{=}3$ & seams 1.39 & halo attention, $h{=}4$ & 1.19, fixed \\
 Ours $G{=}3$ & plan recomputed per level & KV-cached plan (exact) & 2.0$\times$, fixed \\
-Ours $G{=}5,6$ & degrade at $M{=}6$ (23.8, 30.7) & halo; $G{=}5$ & $G{=}5$: 20.5 (2 seeds), fixed; $G{=}6$: 23.6 \\
-B2 & collapse at $M{=}6$ (33.5, 31.0) & none (baseline) & finding \\
+Ours $G{=}5,6$ & degrade at $M{=}6$ (23.8, 30.7) & halo; $G{=}5$ & $G{=}5$: 20.6 (3 seeds), fixed; $G{=}6$: 23.6 \\
+B2 & collapse at $M{=}6$ (33.5, 31.0, 29.4) & none (baseline) & finding \\
 plan-only adapters & mask crash; bias stuck; leak; then NLL 1.834, genPPL 28.5 & key-dim bias; own lr; skip prefix & \textbf{failed} \\
 layer-drop refiner & +0.3--0.5 nats, genPPL $\times$1.5--2 & distillation (insufficient) & \textbf{failed} \\
 \bottomrule

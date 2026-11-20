@@ -82,7 +82,7 @@ halo 4: 1.946).
 
 | model | M=4, T 1.0 / 0.9 / 0.8 | M=6, T 1.0 / 0.9 / 0.8 | seams M=4, T 1.0 / 0.8 | seams M=6, T 1.0 / 0.8 |
 |---|---|---|---|---|
-| B0 | 24.1 / 20.7 / 18.6 | 23.7 / — / 18.8 | 1.52 / 1.46 | 1.50 / 1.47 |
+| B0 | 24.1 / 20.7 / 18.6 | 23.7 / — / 18.8 | 1.52 / 1.46 | 1.49 / 1.47 |
 | Ours G=3 + halo 4 | 21.0 / 18.2 / 16.0 | 21.5 / — / **17.9** | 1.19 / 1.18 | 1.19 / 1.20 |
 | Ours G=5 + halo 4 (local) | 19.4 / 16.6 / 14.9 | 25.2 / 28.9 / 36.9 | 1.17 / 1.13 | 1.19 / 1.22 |
 | B2 | 19.0 / 16.4 / 14.6 | 33.5 / — / 57.3 | 1.17 / 1.10 | 1.15 / 1.17 |
@@ -130,11 +130,41 @@ halo 4: 1.946).
     end), so this is not a matched comparison. B0's subset is too small to read (28 and 6 samples). At T=0.8 G=3's
     tail (54.1, 50 samples) is worse than G=5's (43.7, 306 samples). A matched test would force every model to
     write 6 chunks (block end-of-text, as for the AR baseline) and score the same positions.
-- **Revised claim for the paper:** B2 collapses beyond the trained length (full M=6 score and length-controlled,
-  both seeds). Plan models with fewer global levels degrade less. G=3 + halo 4 is the most robust beyond the
-  trained length. G=5 + halo 4 is better at the trained length but its M=6 result varies across runs (20.0, 21.0,
-  25.2).
+- **Revised claim for the paper:** B2 collapses beyond the trained length (full M=6 score on three seeds, and
+  length-controlled). Plan models with fewer global levels degrade less. G=3 + halo 4 is the most robust beyond the
+  trained length. G=5 + halo 4 is better at the trained length. Its M=6 result is stable on Kaggle (three seeds:
+  20.0, 21.0, 20.8) but 25.2 in the one local run (local encoding, bf16), so treat it as less robust than G=3.
 - At M=4, G=3 + halo 4 trails G=5 and B2 by about 1–1.5 genPPL at every temperature.
+
+## 2026-11-20: Third seed of the main models (Kaggle Version 9, `kaggle/run_seed2.sh`, `--seed 2`)
+
+Same recipe and job as seed 1, own Kaggle encoding (NLL comparable within this run only). Seed-0 values as in the
+seed-1 section below (B0, G=3 + halo 4, B2 local; G=5 + halo 4 Kaggle).
+
+| | B0 | Ours G=3 + halo 4 | Ours G=5 + halo 4 | B2 |
+|---|---|---|---|---|
+| NLL, seed 2 (Kaggle encoding) | 1.6151 | 1.5993 | **1.5928** | 1.6327 |
+| Δ NLL vs B2, seed 2, 95% CI | −0.0174 [−0.0184, −0.0163] | −0.0334 [−0.0343, −0.0324] | **−0.0401 [−0.0409, −0.0393]** | — |
+| NLL chunk 4, seed 2 | 1.686 | 1.666 | 1.667 | 1.744 |
+| genPPL M=4, seed 0 / 1 / 2 | 24.1 / 24.0 / 24.5 | 21.0 / 20.9 / 21.5 | 19.1 / 19.0 / 19.6 | 19.0 / 18.4 / 18.7 |
+| **genPPL M=4, 3-seed mean** | 24.2 | 21.1 | 19.2 | **18.7** |
+| boundary ratio M=4, seed 0 / 1 / 2 | 1.52 / 1.48 / 1.48 | 1.19 / 1.21 / 1.21 | 1.14 / 1.13 / 1.15 | 1.17 / 1.09 / 1.11 |
+| **boundary ratio M=4, mean** | 1.49 | 1.20 | 1.14 | **1.12** |
+| genPPL M=6, seed 0 / 1 / 2 | 23.7 / 23.7 / 23.9 | 21.5 / 20.6 / 21.6 | 20.0 / 21.0 / 20.8 | 33.5 / 31.0 / 29.4 |
+| **genPPL M=6, 3-seed mean** | 23.8 | 21.2 | **20.6** | 31.3 |
+| boundary ratio M=6, seed 0 / 1 / 2 | 1.49 / 1.50 / 1.50 | 1.19 / 1.19 / 1.19 | 1.15 / 1.15 / 1.14 | 1.15 / 1.13 / 1.14 |
+
+What the third seed settles:
+- **B2's collapse beyond the trained length replicates on all three seeds** (M=4 → M=6: 19.0 → 33.5,
+  18.4 → 31.0, 18.7 → 29.4). Both halo models hold (G=3: 21.1 → 21.2; G=5: 19.2 → 20.6, on the Kaggle seeds).
+- **B2 leads at the trained length by 0.5 genPPL** (18.7 vs 19.2, three seeds) and the seams tie (1.12 vs 1.14).
+  So the honest summary is: B2 is slightly better at M=4 and about 50% worse at M=6.
+- **NLL ranking replicates.** Both halo models beat B0, and B2 is worst on all seeds. Seed 2 separates G=5 from
+  G=3 (−0.0401 vs −0.0334 against B2, non-overlapping CIs); seed 1 had them tied.
+- **The plan's effect on chunk 4 is clear:** chunk-4 NLL 1.666–1.667 for the halo models vs 1.744 for B2 and 1.686
+  for B0.
+- G=5 + halo 4's M=6 result is stable across the three Kaggle seeds (20.0 / 21.0 / 20.8, sd 0.5). The local run's
+  25.2 is the outlier. Whether that comes from the local encoding, bf16 vs fp16, or the seed is not resolved.
 
 ## 2026-11-20: Second seed of the main models (Kaggle Version 7, `kaggle/run_seed.sh`, `--seed 1`)
 
