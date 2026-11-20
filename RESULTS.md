@@ -128,13 +128,50 @@ halo 4: 1.946).
     (G=3 + halo 4: tail 36.2 vs about 21 overall). G=3 + halo 4 degrades least.
   - **Caveats:** the long samples are a self-selected subset of different size per model (the runs that did not
     end), so this is not a matched comparison. B0's subset is too small to read (28 and 6 samples). At T=0.8 G=3's
-    tail (54.1, 50 samples) is worse than G=5's (43.7, 306 samples). A matched test would force every model to
-    write 6 chunks (block end-of-text, as for the AR baseline) and score the same positions.
+    tail (54.1, 50 samples) is worse than G=5's (43.7, 306 samples). The matched per-chunk test below removes this
+    selection.
 - **Revised claim for the paper:** B2 collapses beyond the trained length (full M=6 score on three seeds, and
   length-controlled). Plan models with fewer global levels degrade less. G=3 + halo 4 is the most robust beyond the
   trained length. G=5 + halo 4 is better at the trained length. Its M=6 result is stable on Kaggle (three seeds:
   20.0, 21.0, 20.8) but 25.2 in the one local run (local encoding, bf16), so treat it as less robust than G=3.
 - At M=4, G=3 + halo 4 trails G=5 and B2 by about 1–1.5 genPPL at every temperature.
+
+## 2026-11-20: Matched per-chunk test, M=4 vs M=6 (`experiments/score_chunks.py`, local seed-0 runs, 512 samples)
+
+This compares the same positions under both lengths, which removes the length confound above. Chunk m (m = 1..4)
+of M=4 samples is set against chunk m of M=6 samples. Each chunk is scored by GPT-2 Large, conditioned on the story
+text before it, and cut at the first end-of-text token. A chunk counts only if the story has not ended before it
+(n is 430–512 per cell). Chunks 1–3 come before any model ends its story, so ending on time cannot explain a
+difference there.
+
+| genPPL per chunk | T=1.0, M=4: c1 / c2 / c3 / c4 | T=1.0, M=6: c1 / c2 / c3 / c4 | T=0.8, M=4 | T=0.8, M=6 |
+|---|---|---|---|---|
+| B0 (G=0) | 20.8 / 25.3 / 24.2 / 38.4 | 20.6 / 25.1 / 23.5 / 37.5 | 17.2 / 19.4 / 18.1 / 41.2 | 17.1 / 19.6 / 18.5 / 42.2 |
+| Ours G=3 + halo 4 | 21.2 / 20.7 / 19.9 / 26.3 | 22.5 / 21.6 / 20.1 / 20.9 | 17.4 / 15.2 / 15.0 / 19.9 | 19.7 / 17.6 / 15.7 / 17.7 |
+| Ours G=5 + halo 4 | 21.2 / 18.6 / 18.5 / 19.1 | 28.6 / 23.7 / 22.4 / 23.5 | 17.0 / 13.8 / 13.7 / 17.7 | 49.5 / 36.0 / 28.8 / 37.3 |
+| B2 (G=11) | 20.6 / 18.4 / 17.7 / 21.0 | **35.3 / 30.7 / 28.8 / 33.1** | 17.3 / 13.6 / 13.2 / 14.3 | **71.4 / 54.9 / 50.7 / 63.0** |
+
+- **Asking for 6 chunks damages the story from chunk 1.** B2's chunks 1–3 get 60–70% worse at T=1.0 (20.6 → 35.3
+  for chunk 1) and about 4× worse at T=0.8. Nothing has been written before chunk 1, so this is not error piling
+  up over a long story. The global plan for the whole story is out of distribution once it spans 6 chunks, and
+  every chunk generated under that plan suffers.
+- **The damage grows with the number of global levels.** Chunk 1 at T=1.0: G=0 no change (20.8 → 20.6), G=3 +6%
+  (21.2 → 22.5), G=5 +35% (21.2 → 28.6), G=11 +71% (20.6 → 35.3). T=0.8 shows the same order with larger gaps.
+  B0 has no global levels and is unaffected by construction.
+- **G=3 + halo 4 is nearly length-independent.** Its chunks 1–3 change by at most 2.4 genPPL at either
+  temperature. Its chunk 4 improves at M=6 (26.3 → 20.9), probably because at M=4 chunk 4 must end the story,
+  while at M=6 the model has room left.
+- **The M=4 ordering matches the earlier results:** B2 ≈ G=5 < G=3 < B0 on chunks 2–4. So the trade-off is
+  explicit: more global levels give better text at the trained length and worse text at any other length.
+- **Caveats:**
+  - One training seed: these are the local runs, and the local G=5 + halo 4 is the run whose full M=6 score
+    (25.2) was worse than all three Kaggle seeds (20.0–21.0). G=5's degradation here may therefore be overstated.
+    B2's collapse replicated on all three seeds in the full-sample metric.
+  - No confidence intervals are computed. The B2 and G=5 gaps are many times the seed-to-seed spread seen
+    elsewhere; G=3's +1.3 on chunk 1 is small and should not be read as significant.
+- **Revised claim:** B2's M=6 collapse is not a story-length artifact. With a matched comparison, global attention
+  over all chunks degrades every chunk once the plan covers more chunks than in training. Fewer global levels plus
+  halo (G=3 + halo 4) removes most of this, at a cost of about 1–1.5 genPPL at the trained length.
 
 ## 2026-11-20: Third seed of the main models (Kaggle Version 9, `kaggle/run_seed2.sh`, `--seed 2`)
 
