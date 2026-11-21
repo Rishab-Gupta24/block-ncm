@@ -83,6 +83,45 @@ add(P("Then in October 2026 HazyResearch (Stanford) released something called **
 add(P("But there was a catch, and that catch became this whole project. NCM only ever sees **128 tokens at a time**. That is about one paragraph of a children’s story. So I asked myself the obvious question: *what happens when you want a whole story, not one paragraph?*"));
 add(note("**Side note: what is a “token”?** A token is a piece of a word. “playground” might be two tokens, “play” and “ground”. 128 tokens is roughly 90–100 words."));
 
+add(H1("Meet the base NCM: what Stanford built, what they claim, and where it gets stuck"));
+add(P("Before I break something, I should explain how it works. So here is the original NCM from Stanford’s HazyResearch lab (Kumbong et al., arXiv 2610.14162), the model this whole project stands on."));
+
+add(H2("Two parts: a tokenizer that compresses, and a generator that invents"));
+add(P("NCM is really two models glued together:"));
+add(bullets([
+  "**The tokenizer (a VQ-VAE)** squeezes one 128-token paragraph into a stack of codes and can turn the codes back into text. Think of it as a zip file for paragraphs.",
+  "**The generator (a transformer, about 85M parameters)** invents new code stacks from scratch. The tokenizer then turns them into a story.",
+]));
+add(figure("story_ncm_pipeline.png", 6.2, "The base NCM. During training, real paragraphs are compressed into codes. When writing, the generator invents the codes level by level and the decoder turns them into text."));
+add(P("The clever bit is *how* the codes are stacked. After a single starting code come 11 levels, each longer than the last: 8, 16, 24, 32, 40, 52, 64, 76, 92, 108 and 128 codes. Counting the start, that is **641 codes** for one paragraph. The first levels hold the gist (who is in the story, what the mood is); the last levels pin down the exact words. This trick is called **residual quantisation**: each level only stores what the levels above it got wrong."));
+add(note("**Side note: residual quantisation, the shopkeeper way.** Say you owe ₹487. You first hand over the biggest note that fits (₹200, ₹200), then a smaller one for what is left (₹50, ₹20, ₹10), then coins (₹5, ₹2). Every step only pays the *leftover*. NCM does the same with meaning: level 1 pays the big part, and each later level pays a smaller leftover, until level 11 makes it exact."));
+
+add(H2("Why it is fast: a whole level in one go"));
+add(P("An AR model writes token 1, then token 2, then token 3: 128 trips through the model for 128 tokens. NCM’s generator instead predicts **every code of a level at the same time**, in one pass. Level 1 in one pass, level 2 in the next, and level 11 last: 11 passes write the whole paragraph, every time."));
+add(figure("story_ncm_passes.png", 6.2, "Left: an AR model needs one pass for every token, 128 passes for a paragraph. Right: NCM needs one pass per level, 11 passes, and the work in each pass is done in parallel."));
+
+add(H2("What the HazyResearch team claims"));
+add(P("Here is what their paper says, and what I could check myself:"));
+add(bullets([
+  "**Fixed, tiny number of passes:** 128 tokens in 11 passes, whatever the text. *(Checked: true by design, it is right there in the code.)*",
+  "**Much faster than diffusion language models:** 10–31× faster at comparable quality, on three benchmarks. Diffusion models also write in parallel, but need many more refinement steps. *(Not re-checked by me; I only compared against AR models.)*",
+  "**Quality on TinyStories:** genPPL **15.41**. *(Checked: I got 16.38 ± 0.22 over five runs, close enough.)*",
+  "**It scales up:** they also release a bigger model for web text (OpenWebText) that writes 1,024 tokens in 32 levels (1, 4, 9, … 1,024 codes).",
+  "**A key training trick:** conditioning corruption (random junk mixed into the inputs while training), which keeps the model calm when it makes its own mistakes. *(Checked the hard way, as you will see on Day 1.)*",
+]));
+add(P("And to their credit, they are honest about the price: their own AR baseline scores **8.89** on the same test, better than NCM’s 15.41."));
+
+add(H2("The bottlenecks (a.k.a. why this project exists)"));
+add(figure("story_ncm_tradeoffs.png", 6.2, "The price of speed. Left: NCM writes about 1.7× worse text than an AR model of similar size (genPPL, lower is better; the first three bars are from the NCM paper). Right: NCM computes about 5 positions for every token it writes."));
+add(numbered([
+  "**The 128-token wall.** The TinyStories tokenizer and generator only ever see one paragraph. Want a whole story? Nothing in the release does that. **This is the one I attack in Paper 1.**",
+  "**The quality gap.** About 1.7× worse than AR by genPPL (15.41 vs 8.89). Every model I build on top of NCM inherits this gap. **This is Paper 2’s job.**",
+  "**More work per token.** 641 codes for 128 tokens means about 5 positions computed per token, against 1 for AR. With one story at a time this hardly matters: the number of passes decides the speed. But when a GPU writes many stories at once, AR catches up, because then the total work decides the speed.",
+  "**The same 11 levels for everyone.** An easy paragraph gets as many passes as a hard one. The NCM paper itself says an input-dependent schedule “would adapt compute to example complexity”. My quick probe agrees: keeping only levels 6, 9 and 11 still rebuilds 99.5% of tokens, with 39% fewer positions. But the last level can never be skipped.",
+  "**Release gaps.** The code ships with no training script and no loss function (I wrote both), one bug to patch first (issue #11), and an original training recipe (batch 2,048, 50,000 updates) that will never fit on an 8 GB laptop GPU.",
+]));
+add(P("Bottleneck 1 looked like the cleanest place to start: if NCM can only write one paragraph, can I teach it to write many paragraphs *without giving up its 11 passes*? That question is the rest of this log."));
+
 add(H1("What I wanted, and is it even possible on my laptop?"));
 add(P("The goal: make NCM write stories four times longer (512 tokens) and keep its superpower, the small fixed number of passes. If a longer story needs more passes, the whole point of NCM is gone."));
 add(P("Now the bottleneck, which every student researcher knows too well: **hardware and budget**. I do not have a lab full of GPUs. I have my laptop:"));
@@ -146,7 +185,7 @@ add(P("The design that won at the trained length fell apart one step beyond it. 
 // ---------------------------------------------------------------- Day 2
 add(H1("DAY 2 – Proving it is real (20 November)"));
 add(H2("One result is luck, three results is science"));
-add(P("I trained the four main models again with two more random seeds on Kaggle. My AI pair-programmer (Claude Code) kept the runs going overnight while I slept, and later while I was away at a hackathon. When I came back:"));
+add(P("I queued two more random seeds on Kaggle and used Claude Code as my away-from-keyboard runner—starting the next job whenever one finished while I slept or was at a hackathon. When I came back:"));
 add(table(["", "B0 (separate rooms)", "Ours, G=3 + halo", "Ours, G=5 + halo", "B2 (group chat)"],
   [["Score, 4 chunks (trained)", "24.2", "21.1", "19.2", "!18.7"],
    ["Score, 6 chunks (never trained)", "23.8", "21.2", "!20.6", "31.3"],
@@ -241,7 +280,7 @@ const doc = new Document({
   }],
 });
 Packer.toBuffer(doc).then((buf) => {
-  const out = path.join(ROOT, "blockncm_story.docx");
+  const out = process.env.STORY_OUT || path.join(ROOT, "blockncm_story.docx");  // STORY_OUT: e.g. while the docx is open in Word
   fs.writeFileSync(out, buf);
   console.log("wrote", out, buf.length, "bytes");
 });
