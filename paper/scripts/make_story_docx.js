@@ -75,7 +75,7 @@ add(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 120 }, ch
 add(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 80 }, children: [new TextRun({
   text: "Block-NCM, or: how I made a fast model write long stories without making it slow", italics: true, size: 24 })] }));
 add(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 360 }, children: [new TextRun({
-  text: "Rishab Gupta  ·  19–20 November 2026", size: 22, color: "666666" })] }));
+  text: "Rishab Gupta  ·  19–21 November 2026", size: 22, color: "666666" })] }));
 
 add(H1("Where did my idea start?"));
 add(P("Most AI models that write text are like a very careful person typing with one finger. They write one word, look at everything so far, write the next word, look again, and so on. A 500-token story means about 500 trips through the model. These are called *autoregressive* (AR) models, and almost every chatbot you know works this way."));
@@ -105,7 +105,7 @@ add(P("Here is what their paper says, and what I could check myself:"));
 add(bullets([
   "**Fixed, tiny number of passes:** 128 tokens in 11 passes, whatever the text. *(Checked: true by design, it is right there in the code.)*",
   "**Much faster than diffusion language models:** 10–31× faster at comparable quality, on three benchmarks. Diffusion models also write in parallel, but need many more refinement steps. *(Not re-checked by me; I only compared against AR models.)*",
-  "**Quality on TinyStories:** genPPL **15.41**. *(Checked: I got 16.38 ± 0.22 over five runs, close enough.)*",
+  "**Quality on TinyStories:** genPPL **15.41**. genPPL is the quality score used all through this log: a big judge model (GPT-2 Large) reads the generated text and says how surprised it is. **Lower is better**: less surprise means more natural text. *(Checked: I got 16.38 ± 0.22 over five runs, close enough.)*",
   "**It scales up:** they also release a bigger model for web text (OpenWebText) that writes 1,024 tokens in 32 levels (1, 4, 9, … 1,024 codes).",
   "**A key training trick:** conditioning corruption (random junk mixed into the inputs while training), which keeps the model calm when it makes its own mistakes. *(Checked the hard way, as you will see on Day 1.)*",
 ]));
@@ -120,11 +120,10 @@ add(numbered([
   "**The same 11 levels for everyone.** An easy paragraph gets as many passes as a hard one. The NCM paper itself says an input-dependent schedule “would adapt compute to example complexity”. My quick probe agrees: keeping only levels 6, 9 and 11 still rebuilds 99.5% of tokens, with 39% fewer positions. But the last level can never be skipped.",
   "**Release gaps.** The code ships with no training script and no loss function (I wrote both), one bug to patch first (issue #11), and an original training recipe (batch 2,048, 50,000 updates) that will never fit on an 8 GB laptop GPU.",
 ]));
-add(P("Bottleneck 1 looked like the cleanest place to start: if NCM can only write one paragraph, can I teach it to write many paragraphs *without giving up its 11 passes*? That question is the rest of this log."));
+add(P("Bottleneck 1 looked like the cleanest place to start: can I teach NCM to write stories four times longer (512 tokens) *without giving up its 11 passes*? If a longer story needs more passes, the whole point of NCM is gone. That question is the rest of this log."));
 
-add(H1("What I wanted, and is it even possible on my laptop?"));
-add(P("The goal: make NCM write stories four times longer (512 tokens) and keep its superpower, the small fixed number of passes. If a longer story needs more passes, the whole point of NCM is gone."));
-add(P("Now the bottleneck, which every student researcher knows too well: **hardware and budget**. I do not have a lab full of GPUs. I have my laptop:"));
+add(H1("Is it even possible on my laptop?"));
+add(P("Then there is the bottleneck every student researcher knows too well: **hardware and budget**. I do not have a lab full of GPUs. I have my laptop:"));
 add(bullets([
   "**ROG Strix G16** with an AMD Ryzen 9 8940HX",
   "**16 GB RAM**",
@@ -135,8 +134,7 @@ add(P("Is it possible? Yes, with some proper *jugaad*. When my laptop could not 
 // ---------------------------------------------------------------- Day 1
 add(H1("DAY 1 – The Start (19 November)"));
 add(H2("Step zero: does the original model even work on my machine?"));
-add(P("Before changing anything, I had to make sure I could run the original NCM exactly like the authors did. I measured its quality with a score called **genPPL**. A big judge model (GPT-2 Large) reads the generated text and says how surprised it is. **Lower is better**: less surprise means more natural text."));
-add(P("My result: **16.38**, across five runs. The paper says 15.41, so I was in the same neighbourhood. Good, the engine starts. Now let’s modify it."));
+add(P("Before changing anything, I re-ran the original NCM exactly like the authors did and got the **16.38** from above, close to their 15.41. Good, the engine starts. Now let’s modify it."));
 
 add(H2("Three ways to write a longer story"));
 add(P("I imagined a story split into 4 chunks, and four writers, one per chunk. There are three ways to organise them:"));
@@ -170,7 +168,7 @@ add(bullets([
   "**The layer-drop refiner:** run the detailed levels with only half of the model’s layers to go faster. It was 1.55× faster, and the score went from 21.6 to 41.6. Fast and terrible.",
   "**Cut chunks at sentence ends:** sounds smart, right? Seams should be easier. Both models got worse (24.1 → 27.0).",
   "**Freeze the model, train only small adapters:** to keep the original model’s fluency. It ended up the worst model of all (28.5).",
-  "**A “KL anchor” to the original model:** helped single paragraphs (21.0 → 18.0) but made the 4-chunk models worse (19.1 → 25.7). The original model only knows single paragraphs, so it kept pulling my model away from using the plan.",
+  "**A “KL anchor” to the original model:** helped single paragraphs (21.0 → 18.0) but made the 4-chunk models worse (my model with a 5-level plan and halo: 19.1 → 25.7). The original model only knows single paragraphs, so it kept pulling my model away from using the plan.",
 ]));
 
 add(H2("Night 1: moving to Kaggle, and the plot twist"));
@@ -197,7 +195,7 @@ add(figure("fig_tradeoff.png", 6.2, "(a) At the trained length B2 (red) is best.
 add(H2("The “wait, is this too good to be true?” moment"));
 add(P("Then I found something that made my heart sink. Most generated stories **end around chunk 4** anyway, because the training stories were cut at 512 tokens. Models that stopped on time were scored on less text, and models that kept rambling were scored on more. Maybe B2 was not “collapsing”, maybe it just did not know when to stop?"));
 add(P("So I designed a fair test. Compare the **same chunk** in both cases: chunk 1 of a 4-chunk story against chunk 1 of a 6-chunk story. Chunk 1 is the opening paragraph. Nothing has been written before it, and no story can “run on” inside it. If chunk 1 gets worse, the problem is the plan itself."));
-add(P("Result: B2’s opening paragraph got **71% worse** (20.6 → 35.3) just because it was *told* the story would be 6 chunks long. Mine got 6% worse. B0, which has no shared plan, did not change at all. The more levels shared across chunks, the bigger the damage: 0%, 6%, 35%, 71%."));
+add(P("Result: B2’s opening paragraph got **71% worse** (20.6 → 35.3) just because it was *told* the story would be 6 chunks long. Mine got 6% worse. B0, which has no shared plan, did not change at all. The more levels shared across chunks, the bigger the damage: 0% for B0, 6% for G=3, 35% for G=5 and 71% for B2."));
 add(note("**Analogy:** imagine a director who planned a 4-episode series being told it is now 6 episodes. B2 is the director who panics so much that even episode 1 comes out worse. Block-NCM only shares the rough outline, so its writers barely notice."));
 add(figure("fig_chunks.png", 3.6, "Each chunk’s score in 4-chunk stories (solid) and 6-chunk stories (dashed). B2 (red) is worse in every chunk, including the first."));
 
