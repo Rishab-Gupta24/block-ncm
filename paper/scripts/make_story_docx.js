@@ -106,7 +106,7 @@ add(bullets([
   "**Fixed, tiny number of passes:** 128 tokens in 11 passes, whatever the text. *(Checked: true by design, it is right there in the code.)*",
   "**Much faster than diffusion language models:** 10–31× faster at comparable quality, on three benchmarks. Diffusion models also write in parallel, but need many more refinement steps. *(Not re-checked by me; I only compared against AR models.)*",
   "**Quality on TinyStories:** genPPL **15.41**. genPPL is the quality score used all through this log: a big judge model (GPT-2 Large) reads the generated text and says how surprised it is. **Lower is better**: less surprise means more natural text. *(Checked: I got 16.38 ± 0.22 over five runs, close enough.)*",
-  "**It scales up:** they also release a bigger model for web text (OpenWebText) that writes 1,024 tokens in 32 levels (1, 4, 9, … 1,024 codes).",
+  "**It scales up:** their code also describes a bigger model for web text (OpenWebText) that writes 1,024 tokens in 32 levels (1, 4, 9, … 1,024 codes). *(Not checkable yet: when I looked on 19 November, that checkpoint had not been released.)*",
   "**A key training trick:** conditioning corruption (random junk mixed into the inputs while training), which keeps the model calm when it makes its own mistakes. *(Checked the hard way, as you will see on Day 1.)*",
 ]));
 add(P("And to their credit, they are honest about the price: their own AR baseline scores **8.89** on the same test, better than NCM’s 15.41."));
