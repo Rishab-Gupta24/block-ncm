@@ -532,6 +532,9 @@ What the third seed settles:
   for B0.
 - G=5 + halo 4's M=6 result is stable across the three Kaggle seeds (20.0 / 21.0 / 20.8, sd 0.5). The local run's
   25.2 is the outlier. Whether that comes from the local encoding, bf16 vs fp16, or the seed is not resolved.
+  **Resolved 2026-11-27 (Block-ncm-testing-p2, RESULTS.md):** it is bf16 generation. Same model, script and seeds:
+  bf16 25.10, fp32 21.72 (in line with the Kaggle seeds); B2 at M=6 33.63 vs 30.94; at M=4 the effect is small
+  (19.60 vs 19.07). Paper 1's claims are unchanged (its M=6 table uses the Kaggle means); not added to the paper text.
 
 ## 2026-11-20: Second seed of the main models (Kaggle Version 7, `kaggle/run_seed.sh`, `--seed 1`)
 
