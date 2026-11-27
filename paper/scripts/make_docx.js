@@ -122,7 +122,8 @@ const add = (...xs) => xs.flat().forEach((x) => body.push(x));
 add(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 160 },
   children: [new TextRun({ text: "Block-NCM: Long Stories in a Constant Number of Parallel Passes", bold: true, size: 34 })] }));
 add(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 }, children: [new TextRun({ text: "Rishab Gupta", size: 24 })] }));
-add(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 300 }, children: [new TextRun({ text: "Draft, 21 November 2026", size: 22, italics: true })] }));
+add(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 60 }, children: [new TextRun({ text: "BITS Pilani, Dubai Campus", size: 21 })] }));
+add(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 300 }, children: [new TextRun({ text: "November 2026", size: 22, italics: true })] }));
 
 add(new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 100 }, children: [new TextRun({ text: "Abstract", bold: true, size: 24 })] }));
 add(P("Next-Concept Models (NCM) generate a 128-token chunk of text coarse to fine in 11 parallel passes, one per level of a residual code hierarchy. Extending them to longer outputs has two obvious options. Generating chunks one after another multiplies the number of sequential passes by the number of chunks. Letting every level attend across all chunks keeps 11 passes but, as we show, fits the trained length and collapses beyond it. We propose *Block-NCM*: the first G coarse levels form a story plan shared by all chunks, the remaining levels are local to each chunk, and a small *halo* lets local levels see a few positions of each neighbour. Any number of chunks still takes 11 passes. Fine-tuned from the released TinyStories NCM on 512-token stories, Block-NCM writes a story 16.5× faster than a smaller (68.5M-parameter) autoregressive (AR) model at batch size 1 on the same GPU (3.2× at batch 32). Its batch-1 latency stays at about 0.37 s from 256 to 1024 tokens, while generating the chunks one after another becomes up to 9.4× slower. At the trained length it is within 0.5–2.4 genPPL of fully global attention, with better NLL. At 1.5× the trained length fully global attention degrades from 18.7 to 31.3 genPPL over three seeds, while Block-NCM with G=3 stays at 21.2. A matched per-chunk test shows the collapse starts in the first chunk and grows with the number of global levels. Block-NCM’s text remains about 2× worse than the AR model’s by genPPL, a gap mostly inherited from base NCM; we leave quality to follow-up work.",
@@ -234,6 +235,7 @@ add(P("Block-NCM’s text is about 2× worse than the AR model’s by genPPL (19
 // 6 Related work
 add(H1("6  Related work"));
 add(RP("Parallel and non-autoregressive text generation.", "Non-autoregressive translation [6] and iterative mask-predict decoding [7, 8] generate many tokens per pass. Discrete diffusion language models [9, 10] refine all positions over many steps; block diffusion [11] generates blocks in sequence with diffusion inside each block, which corresponds to our B1. NCM [1] generates coarse to fine over a residual code hierarchy [4, 5] in a small fixed number of passes. Block-NCM extends NCM beyond its tokenizer’s 128-token window without adding passes."));
+add(RP("Planning for parallel long-form generation.", "LongWriter’s AgentWrite [18] has an AR model write an outline and then each paragraph; its “+Parallel” variant writes all paragraphs at once from the outline and loses coherence. The Parallel Decoder Transformer [19] proposes parallel decoding streams in an AR model that coordinate through a shared planner-conditioned latent, without empirical results so far. Block-NCM also shares a plan across parts written in parallel, but the plan is the coarse levels of NCM’s own code hierarchy: it is generated in the same passes as the text, needs no separate planner, and its effect is measured."));
 add(RP("Local attention.", "Restricting attention to a window plus a few global positions is standard for long inputs [12]. Our halo is a small window across chunk boundaries at the fine levels; our plan levels play the role of global tokens."));
 add(RP("Length generalisation.", "Transformers often fail beyond their training length; position encodings designed for extrapolation [13] or interpolation [14] address this for AR models. We observe the same failure across chunks in NCM and reduce it by keeping most attention local."));
 add(RP("Speculative decoding.", "Drafting several tokens cheaply and verifying them with an AR model gives lossless speed-ups [15]. DFlash [16] drafts blocks with a diffusion model conditioned on the target model’s hidden features, reporting over 6× acceleration with greedy decoding and 4.1× at temperature 1. A parallel drafter of this kind is a natural use for Block-NCM."));
@@ -251,6 +253,8 @@ add(bullets([
 // 8 Conclusion
 add(H1("8  Conclusion"));
 add(P("Block-NCM generates multi-chunk stories in the same 11 parallel passes that NCM uses for one chunk, 16.5× faster than a smaller AR model at batch 1 on the same GPU, with latency that does not grow with story length. Sharing only the coarse levels across chunks, with a small halo at the seams, nearly matches fully global attention at the trained length and avoids its collapse beyond it. The number of shared levels sets a clear trade-off between quality at the trained length and robustness to length."));
+
+add(RP("Use of AI tools.", "The author used an AI assistant (Claude Code, Anthropic) to help write code and experiment scripts, run and monitor experiments, and edit the text. The author proposed the method, made the design decisions, checked the reported numbers against the experiment logs, and takes full responsibility for the content."));
 
 // References
 add(H1("References"));
@@ -272,6 +276,8 @@ const refs = [
   "Y. Leviathan, M. Kalman, and Y. Matias. Fast inference from transformers via speculative decoding. ICML, 2023.",
   "J. Chen, Y. Liang, and Z. Liu. DFlash: Block diffusion for flash speculative decoding. ICML, 2026. arXiv:2602.06036.",
   "Y. Kim and A. M. Rush. Sequence-level knowledge distillation. EMNLP, 2016.",
+  "Y. Bai, J. Zhang, X. Lv, L. Zheng, S. Zhu, L. Hou, Y. Dong, J. Tang, and J. Li. LongWriter: Unleashing 10,000+ word generation from long context LLMs. arXiv:2408.07055, 2024.",
+  "L. Robbins. Parallel Decoder Transformer: Planner-conditioned latent coordination for model-intrinsic parallel generation. arXiv:2512.10054, 2025.",
 ];
 refs.forEach((r, i) => add(new Paragraph({ spacing: { after: 60 }, indent: { left: 480, hanging: 480 },
   children: [new TextRun({ text: `[${i + 1}]\t`, size: 19 }), new TextRun({ text: r, size: 19 })],

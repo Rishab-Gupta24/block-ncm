@@ -33,3 +33,6 @@ Thumbs.db
 desktop.ini
 .vscode/
 .idea/
+
+# Local email attachments and arXiv upload files (not part of the repo)
+for_professor/

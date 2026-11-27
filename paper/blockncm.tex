@@ -17,8 +17,8 @@
 \definecolor{ours}{HTML}{1f77b4}
 
 \title{\textbf{Block-NCM: Long Stories in a Constant Number of Parallel Passes}}
-\author{Rishab Gupta}
-\date{Draft, 21 November 2026}
+\author{Rishab Gupta\\ \small BITS Pilani, Dubai Campus}
+\date{November 2026}
 
 \raggedbottom
 \begin{document}
@@ -411,6 +411,13 @@ sequence with diffusion inside each block, which corresponds to our B1. NCM~\cit
 a residual code hierarchy~\cite{vqvae, soundstream} in a small fixed number of passes. Block-NCM extends NCM beyond
 its tokenizer's 128-token window without adding passes.
 
+\paragraph{Planning for parallel long-form generation.} LongWriter's AgentWrite~\cite{longwriter} has an AR model
+write an outline and then each paragraph; its ``+Parallel'' variant writes all paragraphs at once from the outline and
+loses coherence. The Parallel Decoder Transformer~\cite{pdt} proposes parallel decoding streams in an AR model that
+coordinate through a shared planner-conditioned latent, without empirical results so far. Block-NCM also shares a
+plan across parts written in parallel, but the plan is the coarse levels of NCM's own code hierarchy: it is generated
+in the same passes as the text, needs no separate planner, and its effect is measured.
+
 \paragraph{Local attention.} Restricting attention to a window plus a few global positions is standard for long
 inputs~\cite{longformer}. Our halo is a small window across chunk boundaries at the fine levels; our plan levels play
 the role of global tokens.
@@ -454,6 +461,10 @@ faster than a smaller AR model at batch 1 on the same GPU, with latency that doe
 at the seams, nearly matches fully global attention at the trained length and avoids its collapse beyond it. The
 number of shared levels sets a clear trade-off between quality at the trained length and robustness to length.
 
+\paragraph{Use of AI tools.} The author used an AI assistant (Claude Code, Anthropic) to help write code and
+experiment scripts, run and monitor experiments, and edit the text. The author proposed the method, made the design
+decisions, checked the reported numbers against the experiment logs, and takes full responsibility for the content.
+
 % =====================================================================
 \begin{thebibliography}{99}\footnotesize\setlength{\itemsep}{1pt}
 \bibitem{ncm} Kumbong et al. Next-Concept Modeling: Fast, parallel coarse-to-fine text generation.
@@ -488,6 +499,10 @@ number of shared levels sets a clear trade-off between quality at the trained le
 \bibitem{dflash} J.~Chen, Y.~Liang, and Z.~Liu. DFlash: Block diffusion for flash speculative decoding. ICML, 2026.
   arXiv:2602.06036.
 \bibitem{seqkd} Y.~Kim and A.~M.~Rush. Sequence-level knowledge distillation. EMNLP, 2016.
+\bibitem{longwriter} Y.~Bai, J.~Zhang, X.~Lv, L.~Zheng, S.~Zhu, L.~Hou, Y.~Dong, J.~Tang, and J.~Li. LongWriter:
+  Unleashing 10,000+ word generation from long context LLMs. arXiv:2408.07055, 2024.
+\bibitem{pdt} L.~Robbins. Parallel Decoder Transformer: Planner-conditioned latent coordination for model-intrinsic
+  parallel generation. arXiv:2512.10054, 2025.
 \end{thebibliography}
 
 % =====================================================================
