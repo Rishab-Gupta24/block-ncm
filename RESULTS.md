@@ -290,6 +290,52 @@ difference there.
   over all chunks degrades every chunk once the plan covers more chunks than in training. Fewer global levels plus
   halo (G=3 + halo 4) removes most of this, at a cost of about 1–1.5 genPPL at the trained length.
 
+## 2026-11-27: Are untrained chunk embeddings behind the collapse at 6 chunks? (inference only, no training)
+
+Chunk embeddings (`nn.Embedding(8, 768)`, zero init) are only trained for chunks 1–4, so rows 5–8 stay exactly zero.
+Test: copy a trained row into rows 5–8 and re-run `sample_eval.py` at M=6 (2 seeds × 256 samples, T=1.0).
+
+| run, M=6 | genPPL (seeds) | seams | reach chunk 6 | entropy | tokens |
+|---|---|---|---|---|---|
+| B2 original (`b2c_M4_G11`) | 33.53 ± 2.34 (35.18, 31.87) | 1.153 | 13.3% | 4.276 | 480 |
+| **B2, rows 5–8 = chunk 4's row** | **26.72 ± 0.09** (26.66, 26.79) | 1.166 | 5.7% | 4.316 | 479 |
+| B2, rows 5–8 = mean of rows 1–4 | (running) | | | | |
+| G=5 + halo 4 original (local) | 25.19 | | | | |
+| G=5 + halo 4, rows 5–8 = chunk 4's row | (queued) | | | | |
+
+- Filling the embeddings in removes about half of B2's collapse (33.5 → 26.7; M=4 is 18.7). The rest is probably
+  unseen rotary positions in the cross-chunk levels. Caveat: fewer samples reach chunk 6 (5.7% vs 13.3%), so part
+  of the gain may come from stories ending earlier.
+- Implication for Paper 2: train on mixed lengths (2–6 chunks) so all chunk embeddings are learned.
+
+## 2026-11-27: How often do two stories share a plot? (`experiments/plot_dup.py`, CPU, existing samples)
+
+For each story, the most similar other story among N = 512 (TF-IDF cosine over content words; capitalised words,
+i.e. names, removed so "Lily" vs "Tom" does not count). Real = 512 random long validation stories cut to 512 tokens;
+models = the saved M=4, T=1.0 samples (local seed-0 runs). Share of stories whose closest twin is at or above each
+similarity:
+
+| source | words / story | mean pair sim | twin ≥ 0.3 | twin ≥ 0.4 | twin ≥ 0.5 | twin ≥ 0.6 |
+|---|---|---|---|---|---|---|
+| real long stories | 120 | 0.041 | 25.2% | 6.2% | 1.2% | 0.4% |
+| B0 (G=0) | 94 | 0.057 | 2.5% | 0.0% | 0.0% | 0.0% |
+| Block-NCM G=3 + halo 4 | 94 | 0.057 | 18.9% | 3.5% | 0.4% | 0.0% |
+| Block-NCM G=5 + halo 4 | 94 | 0.056 | 29.7% | 4.5% | 0.4% | 0.0% |
+| B2 (G=11) | 95 | 0.053 | 26.6% | 5.1% | 0.4% | 0.0% |
+
+What the levels mean, from reading pairs: **≥ 0.5 = the same plot** (two real stories where Lily loves to sing and
+is taken to an opera; two where a boy reads an animal picture book page by page). **0.4–0.5 = same theme or
+setting** (kids find trash in the park; kitchen stories). **0.3–0.4 = same opening template** ("X and Y are
+friends. They like to play in the park.") with different events.
+
+- "1 in 4 stories" is true only at the loose 0.3 level, and it is the same for real text (25%) as for the models
+  (19–30%): it measures TinyStories' formulaic openings, not copied plots.
+- Truly the same plot is rare: 1.2% of real stories (about 1 in 80) and 0.4% for every model (about 1 in 250).
+- B0's near-zero rate is not diversity: its chunks drift between unrelated topics, so whole stories overlap less.
+- G=5 has slightly more template twins than real text (29.7% vs 25.2%), a mild sign of formulaic openings.
+- Caveats: lexical overlap, not meaning; rates grow with N; AR samples were not saved (only 8 examples), so AR is
+  missing here.
+
 ## 2026-11-20: Third seed of the main models (Kaggle Version 9, `kaggle/run_seed2.sh`, `--seed 2`)
 
 Same recipe and job as seed 1, own Kaggle encoding (NLL comparable within this run only). Seed-0 values as in the

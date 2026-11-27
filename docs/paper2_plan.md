@@ -1,167 +1,213 @@
 # Paper 2 plan: better text from Block-NCM without losing the speed
 
-Status: plan only, 2026-11-25. Nothing here is built. Paper 1 goes to the professor and arXiv first.
-Every "measured" number below is from RESULTS.md; anything else is labelled as a guess or a target.
+Status: plan only, updated 2026-11-27. Nothing here is built. Paper 1 goes to the professor and arXiv first.
+**Measured** numbers come from RESULTS.md. Everything marked *est.* is an educated guess, not a prediction: past
+estimates in this project were often off once measured. Treat the estimates as "worth trying", never as promises.
 
 ## 1. Goal
 
 Paper 1 showed Block-NCM is fast (16.5× faster than AR at batch 1) but writes about 2× worse text (genPPL 19.2 vs
 9.9 at 512 tokens). Paper 2 asks: **how much of that gap can we close while staying much faster than AR?**
 
-| | target | why this number |
+| | target | why |
 |---|---|---|
-| Main target | genPPL **14–15** at 512 tokens, temperature 1.0, entropy within 0.05 of today's 4.35 | best-of-8 already reached 15.7 (measured); combining methods should go lower |
-| Stretch | 12–13 | needs a method that fixes per-chunk fluency, not just selection (Sec. 4) |
-| Speed condition | still **≥ 5× faster than AR at batch 1** (today 16.5×) | leaves room for about 3× more work per story |
-| Not a target | "matching AR (9.9)" | base NCM itself is 1.7× behind AR on one chunk (16.4 vs 9.7); closing that needs NCM's original training budget, which does not fit our compute |
+| Main target | genPPL **14–16** at 512 tokens, temperature 1.0, entropy within 0.05 of today's 4.35 | only reachable by combining training fixes, the new method and test-time search (Sec. 5) |
+| Speed condition | still **≥ 5× faster than AR at batch 1** (today 16.5×), i.e. under about 1.2 s per story | leaves room for about 3× more time per story |
+| Consistency target | clearly fewer character-name switches across chunks than today | the new method's main benefit; genPPL barely sees it |
+| Not a target | matching AR (9.9) | the NCM generator itself is 1.7× behind AR on single chunks (16.4 vs 9.7) |
 
-The headline we want: **"better text than X in the same wall-clock time"**, shown as a quality-vs-seconds curve.
+Headline we want: **"better text than X in the same wall-clock time"**, as a quality-vs-seconds plot.
 
-## 2. Where we stand (measured)
+## 2. Every major model so far (measured, 512 tokens, batch 1, RTX 5050)
 
-| | genPPL ↓ | notes |
-|---|---|---|
-| AR TinyStories-33M, 512 tokens (length-matched) | 9.9 | 6.20 s per story at batch 1 |
-| Released NCM, one 128-token chunk | 16.4 | 11 passes |
-| Block-NCM G=5 + halo 4, 512 tokens, 3-seed mean | 19.2 | 0.376 s at batch 1; seams 1.14 |
-| same, M=6 (trained on M=4), 3-seed mean | 20.6 | single runs ranged 20.0–21.0 (local run 25.2) |
-| G=6 + halo 4, M=4 (one seed) | 18.7 | but 23.6 at M=6 |
-| G=3 + halo 8, M=4 (one seed) | 20.4 | halo 2/4/8 at G=3: 21.4 / 21.0 / 20.4 |
-| + plan search, 8 plans (local G=5 run) | 19.4 → 17.1 | no second model; global levels only, batched |
-| + best-of-8 with TinyStories-33M scorer (local G=5 run) | 19.55 → 15.7 | 8× generation + scorer; entropy −0.04 |
-| temperature 0.8 | × 0.77 for every model | lowers entropy too, so not a fair quality gain |
+One pass costs about **34 ms** at batch 1 (0.376 s / 11 passes, decoding included), almost regardless of how much
+work the pass does, because an 89M-parameter model does not fill the GPU. So **latency ≈ number of passes × 34 ms**.
 
-**Where the gap comes from** (measured pieces, rough):
-- **Inherited from NCM:** 16.4 vs 9.7 on single chunks. Not ours to fix cheaply.
-- **Long-story style:** GPT-2 Large scores real long-story text ~1.10× higher than all stories. About 1.6 points.
-- **Our fine-tuning recipe:** ~2.4 points. Single-chunk tests: training on stories of all lengths gives 17.0 (vs
-  21.0 on long stories only); adding the KL anchor gives 16.1, the released level. But the KL anchor **hurt** the
-  M=4 planned models, so it does not transfer as is.
-- **Chunk 1 is already ~21** for every model (per-chunk test), well above the released 16.5. So the biggest
-  Block-NCM-specific loss is per-chunk fluency, not the seams.
-- **Seams are small:** 1.14 against a floor of 1.04 for AR text, which has no seams at all. Even perfect seams would
-  move genPPL by well under 1 point.
+| model | passes | genPPL, 4 chunks | seams | genPPL, 6 chunks | time per story | vs AR |
+|---|---|---|---|---|---|---|
+| real long stories | — | 6.1 | 1.01 | — | — | — |
+| AR, TinyStories-33M | ~512 | **9.9** | 1.04 | (not run) | 6.20 s | 1× |
+| released NCM, 4 independent chunks (not one story) | 11 | 14.4 | 1.25 | — | ~0.38 s | ~16× |
+| B1, released NCM chunk after chunk | 44 | (never trained) | — | — | 1.62 s | 3.8× |
+| B0, no sharing (G=0) | 11 | 24.2 | 1.49 | 23.8 | ~0.38 s | ~16× |
+| Block-NCM G=3 + halo 4 | 11 | 21.1 | 1.20 | **21.2** | ~0.38 s | ~16× |
+| **Block-NCM G=5 + halo 4** (Paper 1 main) | 11 | 19.2 | 1.14 | 20.6 † | **0.376 s** | **16.5×** |
+| Block-NCM G=6 + halo 4 (one seed) | 11 | 18.7 | 1.12 | 23.6 | ~0.38 s | ~16× |
+| B2, share everything (G=11) | 11 | **18.7** | 1.12 | 31.3 | ~0.37 s *est.* | ~16× |
+| G=5 + halo 4 + plan search, 8 plans (local run) | 11 + plan re-runs | 17.1 (from 19.4) | 1.16 | — | ~0.5 s *est.* (1.3× measured for G=3) | ~12× |
+| G=5 + halo 4 + best-of-8, AR scorer (local run) | 11, batch of 8 | 15.7 (from 19.55) | — | — | ~0.65 s *est.* | ~9.5× |
+| **New (2026-11-27):** B2, chunks 5–6 given chunk 4's embedding | 11 | — | 1.17 | **26.7** (was 33.5) | ~0.37 s | ~16× |
 
-## 3. Corrections to the Gemini plan (check before reusing any of it)
+3-seed means except where noted. † Kaggle seeds; a fourth, local run reached 25.2.
 
-| Gemini said | Actually |
-|---|---|
-| Baseline 19.1 (4 chunks), 20.0 (6 chunks) | Those are one seed. Three-seed means: 19.2 and 20.6 |
-| "halo 8 lost to halo 4", so draft noise hurts | Wrong: halo 8 was better (20.4 vs 21.0 at G=3). The "draft-noise lever" rests on a false premise |
-| 4-chunk story takes 18.7 ms; model ~50M params | Measured 376 ms at batch 1 (~34 ms per pass incl. decoding); the generator is ~85M |
-| 5 extra passes cost "nearly the same time" | At batch 1 each pass is a fixed cost: 16 passes ≈ 1.45× time (~0.55 s), still ~11× faster than AR |
-| Real TinyStories genPPL 8.53 | Our reference: 9.67 (128 tokens, NCM paper), 6.1 at 512 tokens |
-| Projected 18.02, 13.8–15.2, 12–14 with equations | The equations use invented constants (e.g. "seam fix 68%", "+0.045 nats"). They are guesses, not predictions |
-| Evaluate at 8 and 12 chunks with Graphify | TinyStories has 415 stories ≥ 1,024 tokens and 0 near 1,536. Nothing to train or check against at 8–12 chunks |
-| Use a KL anchor to a teacher | Our KL anchor hurt M=4 planned models (NLL and genPPL); rejected in Paper 1 |
-| Block-NCM has "planner-refiner distillation" and "start/context/conclusion" blocks | Not in Block-NCM. The layer-drop refiner was tried and failed (genPPL 32–42) |
-| Nothing is public yet | The GitHub repo is public, and Paper 1 has a full draft |
-| Cites HaloBlock, dLoop, FLARE, RouterWise, CoMem (2026) | Not verified. Find and read each one before citing; some may not exist |
+What this table says:
+- The gap to AR is mostly **fluency inside each chunk** (chunk 1 scores about 21 for every model vs 16.4 for the
+  released NCM), not seams (1.14 vs a floor of 1.04) and not sharing (B2, which shares everything, is only 0.5 better).
+- Selection already works: the model *can* write 15.7-quality stories; it just doesn't always.
+- About half of B2's collapse at 6 chunks comes from **chunk embeddings 5–6 never being trained** (they stay zero).
+  Filling them in moved 33.5 → 26.7 without any training. The rest is probably unseen positions.
 
-The useful ideas from it: the 11 + 1 + 4 revision idea (yours), an entity-consistency metric, zero-initialised
-gates with a frozen base, training on the model's own drafts, and reporting entropy next to genPPL.
+## 3. What to add: ranked, with estimates
 
-## 4. Candidate methods, ranked by evidence and cost
+Estimates are changes in genPPL at 4 chunks relative to Paper 1's 19.2 (negative = better), plus the effect at 6
+chunks and the cost in time. "Evidence" says what the estimate rests on.
 
-| # | method | evidence so far | training? | extra time per story | expected effect (guess) |
+### 3a. Add: training fixes (no extra time at all)
+
+| # | addition | evidence | genPPL, 4 chunks | 6 chunks | time |
 |---|---|---|---|---|---|
-| A | **Test-time search:** plan search + best-of-K together, and MBR using NCM's own likelihood (no outside scorer) | plan search −2.3, best-of-8 −3.6 (measured, separately) | none | K× (batchable) | 15–16 |
-| B | **Draft-aware revision (your 11 + 1 + 4)** | none yet: new | yes | +5 passes ≈ +45% | unknown; this is the novel part |
-| C | **Recipe fix:** mix stories of all lengths into M=4 training, tune regularisation | single-chunk gates: 21.0 → 17.0 with all-length data | yes | none | 1–3 points |
-| D | Cheap ablations: G=5 + halo 8, G=6 + halo 8 | halo 8 helped at G=3; G=6 best at M=4 | yes, short | small | 0.5–1 point |
-| E | Entity-consistency metric (the useful part of "Graphify") | none | none | none | a new measurement, not a gain |
-| F | Token-space denoiser distilled from AR | none | large | +4 passes of a 2nd model | park it: gains would be credited to the AR teacher, and it is a different system |
-| G | Length router "bot" | — | — | — | product engineering, not research; build it in the code phase |
+| T1 | **Mixed-length training** (stories of 2–6 chunks), so chunk embeddings 5–6 get trained | today's test: filling the embeddings alone cut B2's collapse by half | 0 to −0.5 *est.* | −1 to −2 *est.* | +0 |
+| T2 | **Recipe fix:** mix stories of all lengths into training | single-chunk test: 21.0 → 17.0 | −1.5 to −3 *est.* | similar | +0 |
+| T3 | Halo 8 instead of 4 for G=5 | at G=3: 21.0 → 20.4 | −0.3 to −0.6 *est.* | small | about +10% compute, ~+0 latency |
+| T4 | Position fix for cross-chunk levels (position interpolation) | addresses the other half of the collapse; inference-only test first | ~0 | −1 to −3 *est.* for B2 / G=5 | +0 |
 
-### B in detail: what "11 + 1 + 4" means in NCM terms
+### 3b. Add: test-time search (no training)
 
-Today the plan (levels 1–G of all chunks) is made **before** any text exists, so it cannot react to what the
-fine levels actually wrote. Your idea adds a feedback step:
+| # | addition | evidence | genPPL, 4 chunks | time |
+|---|---|---|---|---|
+| S1 | **Plan search + best-of-K together**, and MBR using NCM's own likelihood (no outside judge in the loop) | measured separately: −2.3 and −3.6 | −3 to −4.5 *est.* combined | 1.3–1.7× (0.5–0.65 s) |
 
-1. **11 passes:** generate the story as now (G global levels + local levels + halo).
-2. **+1 pass, "read back":** summarise each finished chunk into a few vectors (2–4 per chunk) from its final
-   reconstruction. Unlike the plan, this summary sees the actual text.
-3. **+4 passes, "revise":** re-generate the last fine levels (for example levels 8–11) of every chunk, in parallel,
-   attending to the read-back summaries of all chunks. Each chunk can now fix contradictions and seams with
-   knowledge of what its neighbours really said.
+Search is also **the bar every new method must clear**: at batch 1 the GPU is mostly idle, so 8 parallel samples
+cost only about 1.5× the time. Any method that adds sequential passes must beat best-of-K at equal seconds.
 
-What makes it new: Block-NCM's plan is a forecast; the read-back is a record. The paper's question is
-"does letting chunks see what their neighbours actually wrote fix the fluency the plan cannot?"
+### 3c. Add: the new method, "plan-first graph Block-NCM" (your sketches, adapted to the trained model)
 
-Design rules taken from our own failures:
-- **Freeze the trained Block-NCM** and add the read-back and revision as new modules with a **zero-initialised
-  gate**, so step 0 equals today's model. This is the plan-adapter trick that worked in Paper 1 (closed logit
-  bias with its own learning rate).
-- **Train on the model's own drafts**, not on real text: the revision has to fix its own mistakes.
-- **Keep conditioning corruption on.** Without it, fine-tuning destroyed generation (16.5 → 47.7).
-- **Use full depth for the 4 revision passes first.** The half-depth refiner failed (genPPL 32–42); try lighter
-  versions only after full depth works.
+Built on top of the trained Block-NCM (fine-tuning only; no from-scratch training). Three parts, tested one at a time:
 
-Controls the paper needs (each answers a reviewer's "is it just…?"):
+| # | part | what it does | genPPL, 4 chunks | 6 chunks | extra passes | time |
+|---|---|---|---|---|---|---|
+| N1 | **Vertical sharing via graph slots** | each chunk exposes a few fixed "character / event card" vectors; any chunk can read any card, not just neighbours (halo = sideways, this = any-to-any) | 0 to −1 *est.* | −0.5 to −1.5 *est.* | **0** | ~0.39 s |
+| N2 | **Plan slots** | passes 1–2 write explicit plan vectors: characters, number of chunks (story length), story gist; all chunks read them | −0.5 to −2 *est.* | −1 to −2 *est.* (length-aware ending) | +2 | ~0.45 s |
+| N3 | **Correction after levels 3 and 5** | once content exists, update the plan and graph slots and re-predict those levels | −1 to −3 *est.* | −1 to −2 *est.* | +2 | ~0.51 s |
+| | **N1 + N2 + N3 together** | overlapping gains, so not additive | **−1.5 to −3.5** *est.* (≈ 15.7–17.7) | | **+4 (15 passes)** | **~0.51 s** |
 
-| run | passes | answers |
-|---|---|---|
-| Block-NCM G=5 + halo 4 | 11 | baseline |
-| 11 + 4, revision without read-back | 15 | is it just more passes? |
-| 11 + 1 + 4 | 16 | the method |
-| 8 + 1 + 4 | 13 | does it still win at about the same time? |
-| best-of-2 Block-NCM | 22 (2 × 11) | does it beat spending the same time on selection? |
-| 11 + 1 + 4 + plan search | 16 + plan cost | do the methods add up? |
+**Expected main benefit: character consistency** (fewer new names mid-story, like "Sara" in Paper 1's Figure 3).
+genPPL may move only a little even if consistency improves a lot, so the consistency metric (Phase 1) is required.
 
-## 5. Phases, with go / no-go gates
+Design rules (from Paper 1's evidence):
+- **Keep cross-chunk sharing small and fixed.** B2 shared everything and collapsed beyond the trained length; G=3,
+  which shares a few short levels, held (+6%). Each chunk gets a fixed number of slots, never "all positions".
+- **Share mainly at coarse and middle levels.** Full sharing at the finest levels hurt B2's NLL.
+- **The graph is learned vectors, not parsed text.** Codes are not words until the last level, so a text parser
+  cannot run mid-generation. Parse text only at the end, to *check* the graph against the story.
+- **Train only what is new at first, behind zero-initialised gates,** so step 0 equals Paper 1's model. But note
+  that freezing the whole generator failed before (plan-only adapters: 28.5); allow full fine-tuning if needed.
+- **Train on the model's own drafts** for the correction step, so it learns to fix its own mistakes.
+- **Keep conditioning corruption on** (without it, fine-tuning broke generation: 16.5 → 47.7).
 
-**Phase 0 (now): Paper 1.** Send to the professor, put it on arXiv, ask about the department GPU. No Paper 2 code.
+Training labels we can get cheaply: characters (rule-based name tagger; TinyStories names are simple), number of
+chunks (known from length), story gist (check whether the TinyStories "Instruct" release has per-story summaries or
+required words; not verified yet).
 
-**Phase 1 (after arXiv; ~3 days; mostly CPU): fix the measuring stick.**
-- One eval script for every run: genPPL (GPT-2 Large, T=1.0), unigram entropy, distinct-4, seam ratio, latency at
-  batch 1 / 8 / 32 (with `expandable_segments`), 3 seeds × 256 samples.
-- Build the entity-consistency check (E): extract names and objects per chunk with a simple rule-based tagger
-  (TinyStories names are simple); count contradictions across chunks. Validate it on real stories first (real
-  text should score near zero).
-- Gate: the metric separates real text from B0 (which has no plan). If not, drop it.
+### 3d. Maybe: build only as a comparison
 
-**Phase 2 (~1 week, no training): test-time search (A).**
-- Grid: plan search n ∈ {1, 4, 8} × best-of-K ∈ {1, 2, 4, 8}, plus MBR with NCM's own likelihood.
-- Batch the scorer properly and time everything at batch 1; plot genPPL against seconds per story.
-- Use all three seeds' checkpoints (the local G=5 run is the weakest one).
-- Gate: if the best point reaches ≤ 16 at ≤ 1/5 of AR's time, this alone is a solid workshop result. Continue
-  either way.
+| # | addition | genPPL, 4 chunks | extra passes | time | why only "maybe" |
+|---|---|---|---|---|---|
+| M1 | **11 + 1 + 4** (read back finished chunks, then revise fine levels) | −1 to −3 *est.* | +5 (16) | ~0.55 s | overlaps with N3 (both correct mistakes); worth one comparison run: "fix early (N3) vs fix at the end (M1)" |
+| M2 | Split the finest level into two half-passes | −0.5 to −1.5 *est.* | +1 (12) | ~0.41 s | backup if correction shows no room to help |
 
-**Phase 3 (~2 weeks, training): draft-aware revision (B).**
-- Build read-back + revision modules on the frozen G=5 + halo 4 model; unit-test that step 0 equals the base model.
-- Train on Kaggle T4s (or the department V100), same 1,500-step budget as Paper 1 first.
-- Run the six controls in Sec. 4.
-- Gate after the first run: 11 + 1 + 4 must beat 11 + 4 (no read-back) by more than the seed spread (~0.3). If it
-  doesn't, the read-back adds nothing: write it up as a negative result and lean on A + C.
+### 3e. Measurement additions (no quality gain, but needed)
 
-**Phase 4 (~1 week): recipe fix (C) and cheap ablations (D).**
-- Mix all-length stories into M=4 training (the single-chunk gate cut 21.0 → 17.0); retrain G=5 + halo 4 and
-  re-run the best method on top.
-- G=5 + halo 8 and G=6 + halo 8, one seed each, then seeds for the winner.
+- **Entity-consistency metric** (names and objects per chunk; count contradictions). Validate on real text first.
+- **Second judge model** plus a **blind side-by-side** on about 100 story pairs, so gains are not one AR model
+  pleasing another.
+- **Plot-duplicate rate** (already built: `experiments/plot_dup.py`): same plot ≥ 0.5 similarity is 1.2% for real
+  stories and 0.4% for every model, so search must not raise it (picking "safe" stories would).
 
-**Phase 5: write-up.** Quality-vs-seconds plot as the main figure; per-chunk table; entity-consistency table;
-honest limits. Then decide the venue with the professor.
+## 4. What not to add, and why
 
-## 6. Do's and don'ts
+| idea | why not (evidence) |
+|---|---|
+| Odd/even power or precision switching | no quality gain; at 89M parameters and batch 1 each pass is overhead-bound, so cheaper math saves little time; quantization speeds up AR just as much. Later, reframed as **per-level precision** in an efficiency paper |
+| Correction after **every** level (22 passes) | ~0.75 s (2× today) for a gain bounded like N3's; best-of-K is cheaper at equal time |
+| New NCM from scratch with ~6 levels (the 2 + 3K sketch as drawn) | needs pretraining (original recipe: batch 2,048 × 50k updates), loses the released checkpoint, breaks the comparison. Later, with the department GPU |
+| KL anchor to the released model | measured: hurt the planned models (G=5 + halo: 19.1 → 25.7) |
+| Half-depth / layer-drop refiner | measured: 21.6 → 41.6 |
+| Frozen generator + plan-only adapters | measured: 28.5 vs 22.0 |
+| Sentence-aligned chunks | measured: 22.0 → 24.3, seams worse |
+| More global levels (G ≥ 6) | measured: 23.6–30.7 at 6 chunks |
+| Token-space denoiser distilled from AR | gains would be credited to the AR teacher; adds a second model |
+| Length router "bot" | product engineering, not research; build in the code phase |
+| Lower temperature to report better genPPL | lowers entropy too; not a fair quality gain |
+| Experiments at 8–12 chunks on TinyStories | data doesn't exist (415 stories ≥ 1,024 tokens, none near 1,536) |
+| Parsing a Graphify tree from mid-generation codes | codes aren't text until the last level |
 
-Do:
-- Report entropy and distinct-4 next to every genPPL, always at temperature 1.0.
-- Count the extra cost: every method gets a seconds-per-story number at batch 1 and batch 32.
-- Use three seeds for every claim in the abstract; say "one seed" wherever it is one seed.
-- Freeze what works and add new parts behind zero-initialised gates.
-- Write down the prediction before each run (as in Paper 1's gates), then compare.
+## 5. The recommended package, step by step, against every model
 
-Don't:
-- Don't trust projected numbers (ours or Gemini's) until a run measures them.
-- Don't cite a paper you haven't opened.
-- Don't plan experiments at 8–12 chunks on TinyStories: the data isn't there. M=6 is our longest test.
-- Don't lower the temperature to get a better genPPL.
-- Don't build the router bot or a token-space AR denoiser for this paper.
-- Don't start Phase 1 until Paper 1 has been sent to the professor.
+| configuration | passes | genPPL, 4 chunks | 6 chunks | time per story | vs AR | vs B1 (1.62 s) |
+|---|---|---|---|---|---|---|
+| AR (reference) | ~512 | 9.9 | — | 6.20 s | 1× | 3.8× slower |
+| B2 (Paper 1 baseline) | 11 | 18.7 | 31.3 | ~0.37 s | ~16× | 4.4× faster |
+| **Paper 1: G=5 + halo 4** | 11 | 19.2 | 20.6 | 0.38 s | 16.5× | 4.3× faster |
+| + training fixes (T1, T2, T3) | 11 | ~17–18 *est.* | ~18.5–19.5 *est.* | 0.38 s | 16.5× | 4.3× faster |
+| + plan-first graph (N1–N3) | 15 | ~15.5–17 *est.* | ~17–18.5 *est.* | ~0.51 s | ~12× | ~3.2× faster |
+| + search (best-of-4, batched) | 15, batch 4 | **~14–16** *est.* | ~16–17.5 *est.* | ~0.65–0.7 s | **~9×** | ~2.4× faster |
 
-## 7. Open questions
+Even the full package would stay about 9× faster than AR and well inside the ≥ 5× condition. It would also clearly
+beat every Paper 1 model at 6 chunks if the length-aware parts work.
 
-- Compute: is the department's GPU available to students? It decides whether Phase 3 runs at 1,500 steps or more.
-- Longer data: TinyStories stops at ~6 chunks. HazyResearch lists an OpenWebText model, but as of 2026-11-19 the
-  checkpoint was not released (only a TODO file). Check again before Phase 3.
-- Venue: one quality paper (A + B + C), or A as a short workshop paper first and B as the main paper?
+If only one thing could be built: **training fixes + search** (no new architecture) is the safest path to ~15–16,
+and gives a solid workshop paper. The plan-first graph method is what makes Paper 2 *novel*.
+
+## 6. Phases, with go / no-go gates
+
+**Phase 0 (now):** send Paper 1 to the professor; finish the chunk-embedding test (2 of 3 variants still running).
+No Paper 2 code.
+
+**Phase 1 (~3 days, mostly CPU): measuring stick.** One eval script for every run (genPPL with T=1.0, entropy,
+distinct-4, seams, plot-duplicate rate, latency at batch 1/8/32); the entity-consistency metric; a second judge.
+Gate: the consistency metric separates real text from B0. If not, fix it before anything else.
+
+**Phase 2 (~1 week, no training): search + cheap inference tests.** Plan search × best-of-K grid and MBR, on all
+three seeds; the position-interpolation test (T4) at 6 chunks. Gate: none (always useful); this sets the bar.
+
+**Phase 3 (~1 week, Kaggle): new base model.** Train G=5 + halo (4 and 8) with mixed lengths and all-length data,
+3 seeds. Gate: better than 19.2 at 4 chunks by more than the seed spread (~0.3), and better at 6 chunks.
+
+**Phase 4 (~2–3 weeks, Kaggle or department GPU): plan-first graph, one part at a time.**
+1. + vertical sharing (0 extra passes). Gate: consistency improves, genPPL not worse.
+2. + plan slots. Gate: better ending on time at 6 chunks, or genPPL gain > 0.3.
+3. + correction. Gate: beats best-of-K at equal seconds per story.
+4. One comparison run of 11 + 1 + 4 (fix at the end vs fix early).
+If a part fails its gate, report it as a negative result and keep the parts that passed.
+
+**Phase 5: write-up.** Main figure: genPPL and consistency vs seconds per story, for every model in Sec. 2 and 5.
+
+## 7. Do's and don'ts
+
+Do: report entropy and seconds per story next to every genPPL; three seeds for every abstract claim; write the
+prediction before each run; compare every method against best-of-K at equal time; add new parts behind
+zero-initialised gates.
+
+Don't: trust projected numbers (ours or outside ones) until measured; cite papers you haven't opened; plan
+experiments beyond 6 chunks on TinyStories; lower the temperature for a better genPPL; start Phase 1 before Paper 1
+has been sent.
+
+## 8. Corrections to outside suggestions (check before reusing any of it)
+
+| it said | actually |
+|---|---|
+| baseline 19.1 / 20.0 | one seed; three-seed means are 19.2 / 20.6 |
+| "halo 8 lost to halo 4" | halo 8 was better (20.4 vs 21.0 at G=3) |
+| a story takes 18.7 ms, or a pass 1.5–2 ms | measured 376 ms per story, about 34 ms per pass |
+| 14 passes cost the same as 11 ("iso-latency") | at batch 1 each pass costs about the same: 14 passes ≈ 0.48 s |
+| NCM has a "~15.5 VQ-codec ceiling" | the tokenizer reconstructs real text 99.97% correctly; the limit is the generator |
+| projected genPPL 12.5–14.8, energy −38.8% | invented constants (α, β, "equivalent passes"); nothing measured |
+| half-depth refinement passes | measured to fail (21.6 → 41.6) |
+| KL anchor to a teacher | hurt the planned models; rejected in Paper 1 |
+| evaluate at 8–12 chunks | no data that long in TinyStories |
+| test power switching on the lab's Jetson Nano | unverified that the lab has one; the original Jetson Nano lacks bf16/fp8 |
+| cites HaloBlock, dLoop, FLARE, RouterWise, CoMem, DVD-Quant | none verified; open each before citing |
+
+## 9. Open questions
+
+- Compute: is the department GPU available to students? Phase 4 is much easier with it.
+- Does the TinyStories "Instruct" release include per-story summaries or required words (free plan labels)?
+- Venue: one paper (training fixes + method + search), or search + training fixes as a short workshop paper first?
+
+## 10. Idea credits (for the AI-use statement)
+
+Yours: Block-NCM itself; 11 + 1 + 4; odd/even passes; plan-first passes with a graph, characters and paragraph
+count; connector slots; vertical sharing. Suggested by Claude: the split-level backup, the fixed-size-slot rule
+for vertical sharing, mixed-length training and the position fix (from the chunk-embedding test), and reframing
+odd/even as per-level precision.
