@@ -20,7 +20,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from blockncm.load import amp_dtype, load_released  # noqa: E402
+from blockncm.load import amp_dtype, load_released, token_docs  # noqa: E402
 from blockncm.model import ChunkedNCM  # noqa: E402
 
 ap = argparse.ArgumentParser()
@@ -31,6 +31,9 @@ ap.add_argument("--ckpt", default="~/ncm/checkpoints/tinystories")
 ap.add_argument("--chunked", default="~/ncm/data/chunked")
 ap.add_argument("--data", default="~/ncm/data/tinystories")
 ap.add_argument("--val-every", type=int, default=100)
+ap.add_argument("--source", choices=["train", "valid"], default="train",
+                help="train: val_M{M}.npy (every 100th story of the released model's training file); "
+                     "valid: heldout_M{M}.npy (valid_bpe_8192.bin, never trained on; prepare_chunks.py --source valid)")
 ap.add_argument("--max-docs", type=int, default=0, help="as passed to prepare_chunks.py (0 = all)")
 ap.add_argument("--coarse", type=int, default=3, help="levels 1..coarse count as coarse")
 ap.add_argument("--bs", type=int, default=8)
@@ -45,20 +48,19 @@ cfg, tk, net, sd = load_released(a.ckpt)
 from blockncm.fast import FastChunkedNCM  # noqa: E402  (exactly ChunkedNCM at halo 0; also scores halo runs)
 model = FastChunkedNCM(net, tk, sd).cuda().eval()
 base_state = {k: v.clone() for k, v in model.state_dict().items()}
-val = np.load(os.path.join(os.path.expanduser(a.chunked), f"val_M{a.M}.npy"))
+val = np.load(os.path.join(os.path.expanduser(a.chunked), f"{'val' if a.source == 'train' else 'heldout'}_M{a.M}.npy"))
 C, K, lt, PAD = model.chunk_len, model.K, model.lt, model.pad
 print(f"val docs {len(val)}  M={a.M}", flush=True)
 
 # padding masks per level: (N, M, l_t) True = real content. The token windows are rebuilt from the
 # source data with prepare_chunks.py's exact selection (the tokenizer does not decode PAD reliably).
 data = os.path.expanduser(a.data)
-off = np.load(os.path.join(data, "train_bpe_8192_offsets.npy")).astype(np.int64)
-tok = np.memmap(os.path.join(data, "train_bpe_8192.bin"), dtype=np.uint16, mode="r")
 EOS = model.eos
+off, tok = token_docs(data, a.source, EOS)
 eligible = np.nonzero(np.diff(off) > (a.M - 1) * C)[0]
 if a.max_docs:  # must match prepare_chunks.py --max-docs
     eligible = eligible[: a.max_docs]
-vidx = eligible[eligible % a.val_every == 0]
+vidx = eligible[eligible % a.val_every == 0] if a.source == "train" else eligible
 assert len(vidx) == len(val), f"rebuilt {len(vidx)} val docs, file has {len(val)}"
 
 
@@ -182,6 +184,6 @@ for n in names:
         results[n].setdefault("paired", {})[ref] = {"mean": float(d.mean()), "ci95": [float(lo), float(hi)],
                                                    "frac_docs_better": float(np.mean(d < 0))}
     print(f"| {n} | {cells[0]} | {cells[1]} |")
-out = a.out or os.path.join(os.path.expanduser(a.runs_dir), f"nll_breakdown_M{a.M}.json")
+out = a.out or os.path.join(os.path.expanduser(a.runs_dir), f"nll_breakdown_M{a.M}" + ("_heldout" if a.source == "valid" else "") + ".json")
 json.dump(results, open(out, "w"), indent=2)
 print("->", out)

@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from blockncm.load import load_released  # noqa: E402
+from blockncm.load import load_released, token_docs  # noqa: E402
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--M", type=int, required=True)
@@ -27,6 +27,8 @@ ap.add_argument("--out", required=True)
 ap.add_argument("--max-docs", type=int, default=0, help="cap on documents (0 = all eligible)")
 ap.add_argument("--bs", type=int, default=512, help="chunks per encoder batch")
 ap.add_argument("--val-every", type=int, default=100)
+ap.add_argument("--source", choices=["train", "valid"], default="train",
+                help="valid: encode every eligible story of valid_bpe_8192.bin (never trained on) into heldout_M{M}.npy")
 ap.add_argument("--inspect", action="store_true", help="print format diagnostics and exit")
 ap.add_argument("--lengths-only", action="store_true",
                 help="only write {train,val}_M{M}_len.npy (document lengths) for an existing encoding")
@@ -38,9 +40,9 @@ a = ap.parse_args()
 SUF = "" if a.align == "fixed" else "_sent"
 
 data = os.path.expanduser(a.data)
-off = np.load(os.path.join(data, "train_bpe_8192_offsets.npy")).astype(np.int64)
-tok = np.memmap(os.path.join(data, "train_bpe_8192.bin"), dtype=np.uint16, mode="r")
-assert off[-1] == len(tok), f"offsets end {off[-1]} != token count {len(tok)} (dtype assumption wrong?)"
+off, tok = token_docs(data, a.source)
+if a.source == "train":
+    assert off[-1] == len(tok), f"offsets end {off[-1]} != token count {len(tok)} (dtype assumption wrong?)"
 
 lengths = np.diff(off)
 if a.lengths_only:  # no GPU needed: TinyStories tokenizer context is 128
@@ -66,11 +68,16 @@ if a.max_docs:
     eligible = eligible[: a.max_docs]
 print(f"M={M}: {len(eligible):,} eligible documents")
 is_val = (eligible % a.val_every) == 0
+VAL = "val"
+if a.source == "valid":  # every story is held out: one file, heldout_M{M}
+    is_val[:] = True
+    VAL = "heldout"
 out = os.path.expanduser(a.out)
 os.makedirs(out, exist_ok=True)
 # raw document lengths (tokens, before the window cut), same row order as the code arrays
-np.save(os.path.join(out, f"train_M{M}{SUF}_len.npy"), lengths[eligible[~is_val]].astype(np.int32))
-np.save(os.path.join(out, f"val_M{M}{SUF}_len.npy"), lengths[eligible[is_val]].astype(np.int32))
+if a.source == "train":
+    np.save(os.path.join(out, f"train_M{M}{SUF}_len.npy"), lengths[eligible[~is_val]].astype(np.int32))
+np.save(os.path.join(out, f"{VAL}_M{M}{SUF}_len.npy"), lengths[eligible[is_val]].astype(np.int32))
 if a.lengths_only:
     print(f"wrote lengths: train {int((~is_val).sum()):,} / val {int(is_val.sum()):,}")
     sys.exit(0)
@@ -151,8 +158,9 @@ for s in range(0, len(eligible), docs_per_batch):
     if (s // docs_per_batch) % 50 == 0:
         print(f"  {s + len(idx):,}/{len(eligible):,}  {time.time() - t0:.0f}s", flush=True)
 
-np.save(os.path.join(out, f"train_M{M}{SUF}.npy"), codes[~is_val])
-np.save(os.path.join(out, f"val_M{M}{SUF}.npy"), codes[is_val])
+if a.source == "train":
+    np.save(os.path.join(out, f"train_M{M}{SUF}.npy"), codes[~is_val])
+np.save(os.path.join(out, f"{VAL}_M{M}{SUF}.npy"), codes[is_val])
 if fill:
     print(f"sentence packing: mean share of real tokens in the M*C window {np.mean(fill):.3f}")
 print(f"saved train {int((~is_val).sum()):,} / val {int(is_val.sum()):,} docs -> {out}  ({time.time() - t0:.0f}s)")

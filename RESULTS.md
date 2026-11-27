@@ -290,6 +290,29 @@ difference there.
   over all chunks degrades every chunk once the plan covers more chunks than in training. Fewer global levels plus
   halo (G=3 + halo 4) removes most of this, at a cost of about 1–1.5 genPPL at the trained length.
 
+## 2026-11-27: NLL re-check on stories no model has seen (`valid_bpe_8192.bin`, inference only)
+
+The code review found that our validation stories (every 100th long story) come from `train_bpe_8192.bin`, which
+the released NCM, the starting point of every run, was trained on. We encoded the 1,214 stories longer than 384
+tokens in the unused held-out file (`prepare_chunks.py --source valid` → `heldout_M4.npy`) and scored the local
+runs on both sets (`nll_breakdown.py --source train|valid`). NLL over non-padding codes:
+
+| | B0 | released (zero-shot) | G3+h4 | G5+h4 | B2 |
+|---|---|---|---|---|---|
+| old validation, 1,228 stories (training file) | 1.7486 | 2.0964 | 1.7361 | 1.7351 | 1.7780 |
+| held-out file, 1,214 stories | 1.7413 | 2.0895 | 1.7288 | 1.7287 | 1.7713 |
+| Δ vs B2, old [95% CI] | −0.029 | +0.328 | −0.042 [−0.043, −0.041] | −0.043 [−0.044, −0.042] | — |
+| Δ vs B2, held-out [95% CI] | −0.030 | +0.328 | −0.043 [−0.044, −0.041] | −0.043 [−0.044, −0.042] | — |
+
+- **No effect.** The ranking, the gaps and the confidence intervals are the same on unseen stories; B2 is still the
+  worst fine-tuned model, and both Block-NCM runs beat it on 99% of stories. Paper 1's NLL claims stand.
+- The released model is not better on the stories it was trained on (2.0964 vs 2.0895), so there is no sign of
+  memorisation at this model size and data scale; the held-out stories are simply slightly easier.
+- The encoding check (stored vs re-encoded codes) is 0.909 on both sets: the same encoder nondeterminism as before,
+  which is why NLL is compared only within one encoding.
+- Paper 1 text unchanged. It says "validation stories"; a later version could add that the held-out file gives the
+  same result.
+
 ## 2026-11-27: Independent code review (three small-model reviewers, findings checked by hand)
 
 Three reviewers (Claude Haiku, read-only, given only what the code is meant to do) covered the model core, data and
@@ -305,7 +328,7 @@ Confirmed issues that matter:
   story of `train_bpe_8192.bin`, which the released checkpoint (the starting point of every model) was trained on;
   the held-out `valid_bpe_8192.bin` is on disk but unused. Generation metrics (genPPL, seams, entropy) are not
   affected. Validation NLL is: absolute values are optimistic, and the comparison between models may be slightly
-  biased. Not yet re-measured on the held-out file.
+  biased. Re-measured on the held-out file the same day: no effect (next section).
 - Kaggle scripts: `check()` accepts a run killed without a traceback (model.pt is rewritten at every evaluation,
   so a step-500 checkpoint would pass). Should require "done in" in the log or step == 1500 in model.pt.
 

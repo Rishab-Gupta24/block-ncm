@@ -42,3 +42,23 @@ def amp_dtype(name="auto"):
             return None
         name = "bf16" if torch.cuda.get_device_capability()[0] >= 8 else "fp16"
     return {"bf16": torch.bfloat16, "fp16": torch.float16, "fp32": None}[name]
+
+
+def token_docs(data_dir, source="train", eos=0):
+    """(offsets, tokens) of a TinyStories BPE file. Document i is tokens[offsets[i]:offsets[i + 1]].
+
+    source="train": train_bpe_8192.bin with its offsets file (the released NCM was trained on it).
+    source="valid": valid_bpe_8192.bin, never seen by the released model or our runs. It has no offsets file;
+    documents are cut after each EOS like the training file (each starts with token 12 and ends with 12, EOS).
+    The first document (no leading 12) and the last (no EOS) are dropped so every document has that format.
+    """
+    import numpy as np
+    data_dir = os.path.expanduser(data_dir)
+    tok = np.memmap(os.path.join(data_dir, f"{source}_bpe_8192.bin"), dtype=np.uint16, mode="r")
+    if source == "train":
+        off = np.load(os.path.join(data_dir, "train_bpe_8192_offsets.npy")).astype(np.int64)
+    else:
+        ends = np.nonzero(np.asarray(tok) == eos)[0] + 1  # one past each EOS
+        off = ends.astype(np.int64)                        # documents ends[k]..ends[k+1]
+    assert off[-1] <= len(tok)
+    return off, tok
