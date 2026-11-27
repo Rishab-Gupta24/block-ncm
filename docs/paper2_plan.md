@@ -54,7 +54,7 @@ What this table says:
 
 | mistake (G=5 + halo 4, 4 chunks) | how often | real stories | what it costs |
 |---|---|---|---|
-| doubled word ("and and") | 8.2 per 1,000 words, 93% of stories | 0.13 | deleting all of them: genPPL 19.38 → 18.79 (**only −0.6**) |
+| doubled word ("and and") | 8.2 per 1,000 words, 93% of stories | 0.13 | deleting all of them: genPPL 19.38 → 18.79 (−0.6; a lower bound, since a correct replacement would gain more) |
 | missing or wrong word ("It white and white") | 20 of 20 stories read by hand | — | not measurable by rule; likely most of the gap |
 | meaning contradictions ("She sees the flames. She is happy") | ~17 of 20 | — | — |
 | who-is-who: wrong speaker, talking to oneself | ~15 of 20; self-address 25% of stories for **every** model, even B2 | 2% | — |
@@ -63,8 +63,9 @@ What this table says:
 - Mistakes are spread through each chunk, not bunched at seams (seams: 1.2–1.6× more, except sentences cut at a
   chunk end). The released NCM already writes 4.9 doubled words per 1,000 on single chunks, so the stutter comes
   from parallel decoding, not from Block-NCM's sharing.
-- **Doubled words are the most visible mistake but a small part of genPPL.** The main quality target is missing or
-  wrong words and meaning inside chunks.
+- **Doubled words are the most visible mistake but a small part of genPPL.** Deleting them gains 0.6; replacing
+  them correctly would gain somewhat more (deletion turns an overwritten word into a missing one). The main quality
+  target is still missing or wrong words and meaning inside chunks.
 - **Sharing fixes characters appearing from nowhere, but not self-addressed speech** (same rate in B0 and B2). That
   mistake looks local, inside one chunk.
 
@@ -117,16 +118,31 @@ Design rules (from Paper 1's evidence):
 - **Keep conditioning corruption on** (without it, fine-tuning broke generation: 16.5 → 47.7).
 
 How to train the correction step (N3 / M1):
+- **The correction step works in code space, fixed length.** It is the NCM re-predicting its fine-level codes, not a
+  separate word editor. No insert/delete word editor (Levenshtein-Transformer style) in Paper 2: it would be a second
+  model on words, more work, and it brings back the credit question.
 - **Coarse-conditioned rollouts (main data source).** Keep a real story's coarse codes (levels 1–G) and let the
   trained model generate only the fine levels. The draft follows the real story but contains the model's real
-  mistakes, so (draft, real story) pairs line up position by position. A free-running story cannot be paired with a
-  real one, because the plots differ.
-- **Fake errors on clean stories:** doubled words, dropped words, and swapped character names in later chunks
-  (restore them from chunks 1–2). Plus some clean stories left unchanged, so it learns not to over-edit.
+  mistakes. In code space the target is simply the real story's fine codes at the same positions, so it lines up by
+  construction. A free-running story cannot be paired with a real one, because the plots differ.
+- **Rollout alignment check (run before choosing the training loss; inference only, no training).** Decode the
+  rollouts and compare them with the real stories in two ways: (a) exact position-by-position token match, and
+  (b) edit-distance (Levenshtein) match. If (b) is much higher than (a), the decoder shifts words by a position or
+  two. That decides two things:
+  - Supervise **fine codes**, not token positions. With shifts, a position-by-position token loss would mark every
+    word after a shift as an error. If tokens must be supervised anyway, use only spans that line up.
+  - Whether re-predicting fine levels can **move words**. If it can, the fixed-length step can still repair a
+    missing word, with no insert operation needed.
+- **Fake errors on clean stories, in place only:** doubled words, a word overwritten by a neighbour's copy or a vague
+  filler (this is how a fixed-slot parallel decoder "drops" a word), and swapped character names in later chunks
+  (restore them from chunks 1–2). Never delete a word and shift the rest left: shifted text encodes to shifted codes
+  and breaks the targets. Revisit shifted errors only if the alignment check shows the decoder absorbs shifts. Plus
+  some clean stories left unchanged, so it learns not to over-edit.
 - **Sparse edits:** an "edit here?" output per position plus a replacement, applied only where flagged. Rule:
   never replace two neighbours in the same pass, and a replacement must differ from both neighbours (otherwise it
   can create a new doubled word).
-- **What it must beat:** the free deletion rule (−0.6 genPPL, 0 passes), and best-of-K at equal seconds.
+- **What it must beat:** the free deletion rule (−0.6 genPPL, 0 passes; a lower bound on fixing doubled words), and
+  best-of-K at equal seconds.
 - No outside AI model to fix drafts: gains would partly be its work (same credit problem as an AR fixer).
 
 For character slots (N1), add a **slot-swap loss**: swap two characters' slots during training (labels from the
@@ -207,7 +223,8 @@ Gate: the consistency metric separates real text from B0. If not, fix it before 
 **Phase 2 (~1 week, no training): search + cheap inference tests.** Plan search × best-of-K grid and MBR, on all
 three seeds; the position-interpolation test (T4) at 6 chunks; the story checker with chunk-only repair (find a
 broken chunk by rule, regenerate only its local levels, keep the plan and other chunks). Gate: none (always useful);
-this sets the bar.
+this sets the bar. Also the rollout alignment check (Sec. 3c): exact vs edit-distance match of coarse-conditioned
+rollouts against the real stories, which fixes the correction step's training loss before Phase 4.
 
 **Phase 3 (~1 week, Kaggle): new base model.** Train G=5 + halo (4 and 8) with mixed lengths and all-length data,
 3 seeds. Gate: better than 19.2 at 4 chunks by more than the seed spread (~0.3), and better at 6 chunks.

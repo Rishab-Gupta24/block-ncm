@@ -341,10 +341,12 @@ Takeaways:
 | G5 + halo 4, M=6 (local, 2 × 256) | 2.33% | 25.19 | 23.97 | −1.21 (−5%) |
 | real stories (control) | 0.02% | 6.080 | 6.081 | 0 |
 
-Doubled words are the most *frequent* visible mistake but cost only about 0.6 genPPL at the trained length, a small
-part of the gap to AR (19.2 vs 9.9). Most of the gap is elsewhere: missing or wrong words and meaning errors inside
-chunks, which the rule cannot fix. The deletion rule itself is free (no extra pass), so any trained correction step
-must beat −0.6 to justify its pass.
+Deleting doubled words gains about 0.6 genPPL at the trained length (1.2 at 6 chunks), a small part of the gap to
+AR (19.2 vs 9.9). **This is a lower bound on what fixing them is worth:** when the second copy overwrote a real word
+("ran ran" where "ran fast" belonged), deleting it leaves a missing word, while a correct replacement would gain
+more. Even so, most of the gap is in the other ~99% of words: missing or wrong words and meaning errors inside
+chunks, which the rule cannot fix. The deletion rule is free (no extra pass), so it is the zero-pass baseline any
+trained correction step must beat.
 
 ## 2026-11-27: Are untrained chunk embeddings behind the collapse at 6 chunks? (inference only, no training)
 
