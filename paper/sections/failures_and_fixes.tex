@@ -7,7 +7,11 @@ fixed it. Unresolved failures are reported as such. All runs fine-tune the relea
 (11 target levels, 641 codes per 128-token chunk) on $M{=}4$ chunks (512 tokens) for 1{,}500
 steps of 8 documents. NLL is measured on all 1{,}228 validation documents with padding masked. genPPL uses
 GPT-2 Large, $2$ seeds $\times$ 256 samples, temperature 1.0. The \emph{boundary ratio} is the genPPL of 64-token
-windows across a chunk seam divided by that of windows inside a chunk (real text: 1.01).
+windows across a chunk seam divided by that of windows inside a chunk (real text: 1.01). NLL depends on the encoding
+of the validation set: the local runs and each Kaggle job encode it separately, so NLL is comparable only within one
+encoding. This appendix uses the local encoding unless stated; Table~\ref{tab:main} uses the seed-2 Kaggle
+encoding. Single-chunk runs use 256 samples from one sampling seed, on which the released model scores 16.5 (16.4
+averaged over two sampling seeds, Section~\ref{sec:setup}).
 
 \subsection{Shared pipeline (all models)}
 
@@ -80,7 +84,7 @@ On the T4 (no bf16), the quantizer's convolutions produced NaN in fp16, and trai
 loss. \emph{Fix:} the quantizer always runs in fp32; training aborts on any non-finite loss; the pipeline greps
 every stage log for NaN. Separately, the bf16 quantizer loses precision even on the RTX~5050 (loss 3.116 vs
 2.965 in fp32). This may explain why our reproduction of the released model scores 16.38 against the paper's
-15.41; \textbf{a test is pending}.
+15.41; we have not tested this.
 
 \paragraph{F5. Evaluation running out of memory.}
 Generation at $M{=}6$ and plan search (8 plans) ran out of memory at batch 64. \emph{Fix:} every evaluation
@@ -93,8 +97,8 @@ lower bound that the plan must beat.
 
 \subsection{Ours: Block-NCM ($G{=}3$, plan over levels 1--3)}
 \paragraph{O1. The plan alone did not fix the seams.}
-\emph{Evidence.} Ours has the best NLL of the three baselines (1.7438 vs 1.7486 B0 and 1.7780 B2; $-0.0049$ nats
-vs B0, 95\% CI $[-0.0056,-0.0042]$). But it closed only about 40\% of the B0$\to$B2 gap in generation: genPPL
+\emph{Evidence.} Without halo, $G{=}3$ has better NLL than both baselines (local encoding: 1.7438 vs 1.7486 for B0
+and 1.7780 for B2; $-0.0049$ nats vs B0, 95\% CI $[-0.0056,-0.0042]$). But it closed only about 40\% of the B0$\to$B2 gap in generation: genPPL
 22.0 vs 19.0, boundary ratio 1.39 vs 1.17.
 \emph{Diagnosis.} A level-3 plan carries topic and characters. Seams need token-level continuity, though, and
 that is decided by the local fine levels, which cannot see the neighbouring chunk.
@@ -104,7 +108,7 @@ adds no sequential passes. It costs $2h$ extra positions per chunk per local lev
 \emph{Outcome} ($h{=}4$):
 \begin{itemize}[nosep]
   \item boundary ratio 1.39$\to$1.19, closing 95\% of the B0$\to$B2 gap;
-  \item best NLL of all runs (1.7361);
+  \item best NLL of the local runs (1.7361);
   \item genPPL 22.0$\to$21.0.
 \end{itemize}
 Plan search (8 sampled plans, keep the most likely) adds a further gain: 20.0. Wider halos help a little:
@@ -117,8 +121,8 @@ training step is 2.0$\times$ faster on a T4 (1.21\,s vs 2.43\,s).
 
 \paragraph{O3. Generation quality is still below the released model.}
 Samples keep a coherent plot across all four chunks, but grammar slips are frequent. That is a consequence of F1
-and of model size. Plan-only adapters did not help (below). Under test: lower sampling temperature, and recipe
-changes. Unfiltered openings are not usable at $M{=}4$, per-level loss weighting had no effect, and a KL anchor to
+and of model size. Plan-only adapters did not help (below). Lower sampling temperature improves every model alike
+(Section~\ref{sec:ablations}). Unfiltered openings are not usable at $M{=}4$, per-level loss weighting had no effect, and a KL anchor to
 the released model made the $M{=}4$ models worse (F1).
 \textbf{Open.}
 
@@ -126,13 +130,14 @@ the released model made the $M{=}4$ models worse (F1).
 More global levels improve generation at the training length: genPPL 20.0 ($G{=}5$) and 19.6 ($G{=}6$) vs 19.0
 for B2. But they \emph{fail to extrapolate}. At $M{=}6$ (trained on $M{=}4$), $G{=}6$ degrades to 30.7 and
 $G{=}5$ to 23.8, while $G{=}3$ holds (21.8). $G{=}6$ also loses on the fine levels (level 6 NLL 1.86 vs 1.68).
-\emph{Fix: add halo.} With halo $h{=}4$, $G{=}5$ goes from 19.2 at $M{=}4$ to 20.6 at $M{=}6$ (means of three
-seeds), the best $M{=}6$ score of any model; B2 goes from 18.7 to 31.3. At $M{=}4$, B2 leads by about 0.5 genPPL and
-the seams tie (boundary ratio 1.12 vs 1.14). $G{=}6$ with halo generates best at $M{=}4$ (18.7) but still degrades
-at $M{=}6$ (23.6). One local retraining of $G{=}5$ with halo (local encoding, bf16) reached only 25.2 at $M{=}6$
-against 20.0--21.0 for the three Kaggle seeds. \emph{Resolution:} $G{=}5$ with halo is best at the training length.
-$G{=}3$ with halo (21.1$\to$21.2, three seeds) is the most robust beyond it. $G\ge 6$ learns the training length
-even with halo.
+\emph{Fix attempted: add halo.} With halo $h{=}4$, $G{=}5$ goes from 19.2 at $M{=}4$ to 20.6 at $M{=}6$ (means of
+three Kaggle seeds), the best $M{=}6$ score of any model; B2 goes from 18.7 to 31.3. At $M{=}4$, B2 leads by about
+0.5 genPPL and the seams tie (boundary ratio 1.12 vs 1.14). $G{=}6$ with halo generates best at $M{=}4$ (18.7, one
+seed) but still degrades at $M{=}6$ (23.6). The no-halo runs were local, however, and one local retraining of
+$G{=}5$ with halo (local encoding, bf16) reached only 25.2 at $M{=}6$, worse than the local no-halo run (23.8).
+So the halo's share of the $G{=}5$ result is not settled. \emph{Resolution:} among the variants that hold at
+$M{=}6$, $G{=}5$ with halo is best at the training length (Kaggle seeds). $G{=}3$ with halo (21.1$\to$21.2, three
+seeds, one of them local) is the most robust beyond it. $G\ge 6$ fits the training length even with halo.
 
 \emph{Caveat on the $M{=}6$ metric.} Samples are scored up to their first end-of-text token. B0 and $G{=}3$ with
 halo mostly end their stories within four chunks at $M{=}6$, while B2 and $G{=}5$ more often run on, so part of the
@@ -140,9 +145,9 @@ $M{=}6$ gap measures ending on time. Scoring only samples longer than 4.5 chunks
 22.5, $G{=}5$+halo 30.8, B2 49.8 at temperature 1.0). Text past the trained length is worse than in-length text for
 every model. A matched test removes the confound. We score chunks 1--4 of $M{=}6$ samples against the same chunks of
 $M{=}4$ samples, each conditioned on the story before it (one training seed, 512 samples). B2's chunk 1 already
-worsens from 20.6 to 35.3 genPPL (71.4 at temperature 0.8), before anything has been written, so the global plan
-itself is damaged once it spans more chunks than in training. The damage grows with the number of global levels.
-For chunk 1 it is none for $G{=}0$, $+6\%$ for $G{=}3$+halo, $+35\%$ for $G{=}5$+halo (the local run, our weakest
+worsens from 20.6 to 35.3 genPPL (71.4 at temperature 0.8). Chunk 1 covers the same tokens under both lengths and
+all chunks are generated together, so the damage comes from attention across more chunks than in training, not
+from a long story. The damage grows with the number of global levels. For chunk 1 it is $-1\%$ for $G{=}0$, $+6\%$ for $G{=}3$+halo, $+35\%$ for $G{=}5$+halo (the local run, our weakest
 $G{=}5$ seed) and $+71\%$ for B2.
 
 \subsection{B2: fully global ($G{=}11$)}
@@ -150,10 +155,9 @@ B2 generates best at $M{=}4$ but has the \emph{worst} NLL of all runs (1.7780), 
 chunk 4. More importantly, it \textbf{collapses beyond the training length}: genPPL 19.0$\to$33.5 at $M{=}6$, and
 18.4$\to$31.0 and 18.7$\to$29.4 in two more training seeds, with high sampling variance (sd 2.3 and 1.2). At
 sampling temperature 0.8 it is worse still (57.3). In the matched per-chunk test above, every one of its first
-four chunks is 60--70\% worse when it plans 6 chunks, so the collapse is not a story-length artifact. Global
-attention across all chunks fits the training length. This is the
-baseline's failure, not ours, and it motivates Block-NCM: B2's advantage exists only at the length it was
-trained on.
+four chunks is 58--71\% worse when it generates 6 chunks, so the collapse is not a story-length artifact. Global
+attention across all chunks fits the training length. This failure of the fully global baseline motivates
+Block-NCM: B2's advantage exists only at the length it was trained on.
 
 \subsection{Plan-only adapters (frozen generator)}
 Goal: keep the released model's fluency (F1) by freezing the generator and training only LoRA adapters on the
@@ -203,7 +207,7 @@ all (memory) & dense graph $>$ 8\,GB & per-level path ($<10^{-6}$ equal) & fixed
 all (fp16) & quantizer NaN, silent & fp32 quantizer, abort on NaN & fixed \\
 Ours $G{=}3$ & seams 1.39 & halo attention, $h{=}4$ & 1.19, fixed \\
 Ours $G{=}3$ & plan recomputed per level & KV-cached plan (exact) & 2.0$\times$, fixed \\
-Ours $G{=}5,6$ & degrade at $M{=}6$ (23.8, 30.7) & halo; $G{=}5$ & $G{=}5$: 20.6 (3 seeds), fixed; $G{=}6$: 23.6 \\
+Ours $G{=}5,6$ & degrade at $M{=}6$ (23.8, 30.7) & halo; $G{=}5$ & $G{=}5$: 20.6 (3 Kaggle seeds; local 25.2), partly; $G{=}6$: 23.6 \\
 B2 & collapse at $M{=}6$ (33.5, 31.0, 29.4) & none (baseline) & finding \\
 plan-only adapters & mask crash; bias stuck; leak; then NLL 1.834, genPPL 28.5 & key-dim bias; own lr; skip prefix & \textbf{failed} \\
 layer-drop refiner & +0.3--0.5 nats, genPPL $\times$1.5--2 & distillation (insufficient) & \textbf{failed} \\

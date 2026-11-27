@@ -47,8 +47,11 @@ by genPPL, a gap mostly inherited from base NCM; we leave quality to follow-up w
 Autoregressive (AR) language models need one sequential forward pass per generated token. Next-Concept Models
 (NCM)~\cite{ncm} instead encode a chunk of text into a hierarchy of residual vector-quantised codes and generate the
 hierarchy level by level, all positions of a level in parallel. The released TinyStories model produces 128 tokens
-in 11 sequential passes and is 10--31$\times$ faster than diffusion language models at comparable quality on three
-benchmarks~\cite{ncm}. Its tokenizer and generator, however, see only 128 tokens at a time.
+in 11 sequential passes\footnote{The NCM paper counts 12 function evaluations. Level 0 (one code) is drawn from a
+stored unigram table, not by a transformer pass, so we count 11.}, and its authors report it to be 10--31$\times$
+faster than diffusion language models at comparable quality on three benchmarks~\cite{ncm}. Its tokenizer and
+generator, however, see only 128 tokens at a time. Here, ``long'' means longer than that window: we train on 512
+tokens and test up to 768.
 
 This paper asks how to keep NCM's small, fixed number of passes when the output is several chunks long. Two simple
 answers exist (Figure~\ref{fig:arch}):
@@ -66,11 +69,11 @@ Block-NCM sits between the two: only the coarse levels, which carry topic and ch
   \item \textbf{Block-NCM}, a chunked NCM whose coarse levels form a shared plan and whose fine levels are local
         with a small halo. It takes 11 sequential passes for any number of chunks (Section~\ref{sec:method}).
   \item \textbf{Measured speed}: 16.5$\times$ faster than an AR model at batch 1 and 3.2$\times$ at batch 32 on the
-        same GPU, and batch-1 latency that does not grow with story length, unlike chunks generated in sequence
-        (2.1--9.4$\times$ slower from 256 to 1024 tokens) (Section~\ref{sec:speed}).
+        same GPU, and batch-1 latency that stays flat from 256 to 1024 tokens on our GPU, unlike chunks generated
+        in sequence (2.1--9.4$\times$ slower over the same range) (Section~\ref{sec:speed}).
   \item \textbf{A quality--robustness trade-off in $G$}: more global levels give better text at the trained length
-        and worse text beyond it, with fully global attention at the extreme. A matched per-chunk test locates the
-        failure in the plan itself (Section~\ref{sec:length}).
+        and worse text beyond it, with fully global attention at the extreme. A matched per-chunk test shows the
+        failure comes from cross-chunk attention and starts in the first chunk (Section~\ref{sec:length}).
   \item \textbf{A record of what failed}: conditioning corruption is required to fine-tune NCM at all, and four
         other ideas did not work (Appendix~\ref{sec:failures}).
 \end{enumerate}
@@ -79,14 +82,14 @@ Block-NCM sits between the two: only the coarse levels, which carry topic and ch
 \section{Background: Next-Concept Models}
 \label{sec:background}
 
-NCM~\cite{ncm} pairs a VQ-VAE tokenizer~\cite{vqvae} with a generator. The tokenizer maps 128 BPE tokens to a
-latent sequence and quantises it with residual vector quantisation~\cite{soundstream} over levels of increasing
+NCM~\cite{ncm} pairs a VQ-VAE tokenizer~\cite{vqvae} with a generator. The tokenizer maps 128 tokens (BPE with a
+vocabulary of 8,192) to a latent sequence and quantises it with residual vector quantisation~\cite{soundstream} over levels of increasing
 length. In the released TinyStories model, a single position at level 0 is followed by 11 target levels of length
 $(8,16,24,32,40,52,64,76,92,108,128)$: 641 codes per chunk. Level $k$ refines the reconstruction left by levels
 $<k$, so coarse levels hold the gist and fine levels hold token-level detail; the last level cannot be dropped
 without losing tokens (Appendix~\ref{sec:probe}).
 
-The generator is a transformer that predicts all codes of level $k$ in one pass, given the running reconstruction
+The generator is a transformer (89.0M parameters) that predicts all codes of level $k$ in one pass, given the running reconstruction
 from levels $<k$. Generating a chunk therefore takes 11 passes regardless of its length. During training the
 generator's conditioning codes are partly replaced by random codes from the same codebook (\emph{conditioning
 corruption}, mean rate 0.5), which makes it robust to its own sampling errors~\cite{ncm}. We found this step
@@ -135,14 +138,18 @@ clean). Padding codes after the end of a story are masked from all metrics.
 \section{Experimental setup}
 \label{sec:setup}
 
-\paragraph{Data.} TinyStories~\cite{tinystories}, stories longer than 384 BPE tokens (4.7\% of the corpus):
+\paragraph{Data.} TinyStories~\cite{tinystories} as released with NCM (BPE-8192 tokenisation), stories longer than
+384 tokens (4.7\% of the corpus):
 125,723 training and 1,228 validation stories, cut to 512 tokens ($M{=}4$). Evaluation at $M{=}6$ (768 tokens)
 uses models trained only on $M{=}4$.
 
 \paragraph{Models.} B0, B2, and Block-NCM with $G{=}3$ or $G{=}5$ and halo $h{=}4$, all fine-tuned from the
 released checkpoint with the same recipe: 1,500 steps of 8 stories, AdamW, lr $3{\times}10^{-5}$ with 200 warm-up
-steps and cosine decay, gradient checkpointing. Main models are trained with three seeds (one locally in bf16 on an
-RTX~5050 laptop GPU, two on Kaggle T4s in fp16).
+steps and cosine decay, gradient checkpointing. Main models are trained with three seeds. For B0, $G{=}3$ and B2,
+one seed ran locally in bf16 on an RTX~5050 laptop GPU and two on Kaggle T4s in fp16; for $G{=}5$, all three ran
+on Kaggle. A fourth $G{=}5$ run, trained locally, is reported separately: it matches the others at $M{=}4$ (19.4)
+but reaches 25.2 at $M{=}6$. With it, the four-run means are 19.3 and 21.8. Local and Kaggle runs differ in
+precision and in their encoding of the data, and we have not found the cause of this gap.
 
 \paragraph{Metrics.}
 \begin{itemize}
@@ -156,8 +163,8 @@ RTX~5050 laptop GPU, two on Kaggle T4s in fp16).
 \end{itemize}
 
 \paragraph{Reference points.} The released NCM scores 16.38 $\pm$ 0.22 genPPL on single 128-token chunks in our
-reproduction (paper: 15.41~\cite{ncm}). As an AR reference we use TinyStories-33M~\cite{tinystories}, a 68.5M-parameter
-GPT-Neo trained on TinyStories; at 128 tokens it scores 9.68, close to the NCM paper's 88.6M AR baseline (8.89).
+reproduction (paper: 15.41~\cite{ncm}). As an AR reference we use TinyStories-33M~\cite{tinystories}, a GPT-Neo trained on
+TinyStories with 68.5M parameters including embeddings; at 128 tokens it scores 9.68, close to the NCM paper's 88.6M AR baseline (8.89).
 
 % =====================================================================
 \section{Results}
@@ -181,8 +188,8 @@ same length. At batch 1, Block-NCM takes 0.38\,s per story and the AR model 6.20
 The ratio falls with batch size, to 10.8$\times$ at batch 8, 6.0$\times$ at 16 and \textbf{3.2$\times$ at 32}
 (0.063 vs 0.202\,s per story). Block-NCM is compute-bound from batch 16, while the AR loop's time per batch stays at
 6.0--6.5\,s from batch 1 to 32, so its per-token overhead is shared across the batch and AR would overtake
-Block-NCM at some larger batch. Block-NCM's network is larger than the AR model (a 546\,MB fp32 checkpoint against
-274\,MB), so the speed comes from making 11 passes instead of about 517, not from a smaller model.
+Block-NCM at some larger batch. Block-NCM's generator is larger than the AR model (89.0M against 68.5M
+parameters), so the speed comes from making 11 passes instead of about 517, not from a smaller model.
 
 \paragraph{Against chunks in sequence (B1).} B1 has no trained model of its own, but latency does not depend on the
 weights, so we time it as $M$ single-chunk generations of the released NCM run one after another (11 passes each)
@@ -194,8 +201,8 @@ batch 8 B1 is 2.1--3.3$\times$ slower. At batch 32 the two tie (1.0--1.1$\times$
 of chunk positions per pass, and the GPU is saturated. Block-NCM's gain over B1 is latency, not throughput.
 
 Three details matter for a fair comparison. First, the AR side uses unoptimised \texttt{generate} without CUDA
-graphs or fused kernels, so the batch-1 ratio is an upper bound; AR timings varied between 6.2 and 8.1\,s across
-runs. Second, the tokenizer's decoder must run with TF32 or fp16 matrix multiplies: in plain fp32 it hits a slow
+graphs or fused kernels, so the batch-1 ratio is an upper bound. At batch 1, AR timings varied between 6.2 and
+8.1\,s across runs (laptop GPU clocks); we report the fastest. Second, the tokenizer's decoder must run with TF32 or fp16 matrix multiplies: in plain fp32 it hits a slow
 path that takes 4.2\,s at batch 32. We run the code lookup in fp32 and the decoder in fp16, which matches the fp32
 output on 99.96\% of tokens. Third, memory: with PyTorch's default allocator, Block-NCM at batch 32 reserved
 8.6\,GiB for 512 tokens, although it allocated only 3.6\,GiB, and the excess spilled into system memory, which
@@ -219,7 +226,9 @@ Block-NCM is about 5\% slower than B2, because halo positions add queries.
 \centering
 \small
 \caption{Main models at the trained length ($M{=}4$, 512 tokens) and at $M{=}6$ (768 tokens, never trained).
-Means of three training seeds. NLL: seed 2 (one shared encoding); $\Delta$ vs B2 with 95\% bootstrap CI.}
+genPPL: mean $\pm$ sd over three training seeds; seam ratio: mean. NLL: the seed-2 runs, which share one
+encoding of the validation set (NLL is comparable only within one encoding); $\Delta$ vs B2 with 95\% bootstrap
+CI. B2 has the worst NLL on all three seeds.}
 \label{tab:main}
 \setlength{\tabcolsep}{2.4pt}
 \resizebox{\columnwidth}{!}{%
@@ -227,9 +236,9 @@ Means of three training seeds. NLL: seed 2 (one shared encoding); $\Delta$ vs B2
 \toprule
  & B0 & \textcolor{ours}{G3+h4} & \textcolor{ours}{G5+h4} & B2 \\
 \midrule
-genPPL, $M{=}4$ & 24.2 & 21.1 & 19.2 & \textbf{18.7} \\
+genPPL, $M{=}4$ & 24.2{\tiny$\pm$0.3} & 21.1{\tiny$\pm$0.3} & 19.2{\tiny$\pm$0.3} & \textbf{18.7}{\tiny$\pm$0.3} \\
 seam ratio, $M{=}4$ & 1.49 & 1.20 & 1.14 & \textbf{1.12} \\
-genPPL, $M{=}6$ & 23.8 & 21.2 & \textbf{20.6} & 31.3 \\
+genPPL, $M{=}6$ & 23.8{\tiny$\pm$0.1} & 21.2{\tiny$\pm$0.6} & \textbf{20.6}{\tiny$\pm$0.5} & 31.3{\tiny$\pm$2.1} \\
 seam ratio, $M{=}6$ & 1.50 & 1.19 & 1.15 & 1.14 \\
 \midrule
 NLL & 1.6151 & 1.5993 & \textbf{1.5928} & 1.6327 \\
@@ -245,7 +254,8 @@ Table~\ref{tab:main} shows the main models at the trained length. \textbf{B2 wri
 both are near the 1.04 that AR samples reach without any seams. B0, which never connects chunks, has the worst text
 and seams (24.2, 1.49) and visibly loses track of its characters (Figure~\ref{fig:samples}).
 
-\textbf{B2 has the worst NLL of all models}, worse even than B0, on every seed. Both Block-NCM models beat it with
+\textbf{B2 has the worst NLL of all models}, worse even than B0, on every seed (each seed is compared within its
+own encoding). Both Block-NCM models beat it with
 non-overlapping confidence intervals. B2's loss is concentrated on the fine levels (6--11) and on chunk 4: global
 attention at the finest levels hurts teacher-forced prediction, plausibly because the released model never saw
 positions beyond 128 at those levels. Teacher-forced NLL and free generation rank B2 differently, so we report both.
@@ -294,10 +304,12 @@ four chunks, as the training stories do, and models that keep writing are scored
 this. First, scoring only samples longer than 4.5 chunks keeps the ranking: $G{=}3$ 22.5, $G{=}5$ 30.8, B2 49.8
 (one seed). Second, a \emph{matched per-chunk test} compares the same positions under both lengths: chunk $m$ of
 $M{=}4$ samples against chunk $m$ of $M{=}6$ samples, each scored by GPT-2 Large given the story before it
-(Figure~\ref{fig:chunks}). B2's chunks 1--4 are all 58--71\% worse when it plans 6 chunks. Its \emph{first} chunk
-goes from 20.6 to 35.3 genPPL, before any story text exists. The damage therefore comes from the plan, not from
-errors piling up in a long story. It grows with the number of global levels: $-1\%$ for $G{=}0$, $+6\%$ for $G{=}3$,
-$+35\%$ for $G{=}5$, and $+71\%$ for B2 (Figure~\ref{fig:tradeoff}b).
+(Figure~\ref{fig:chunks}). B2's chunks 1--4 are all 58--71\% worse when it generates 6 chunks. Its \emph{first}
+chunk goes from 20.6 to 35.3 genPPL. Chunk 1 covers the same tokens 0--127 under both lengths, and all chunks are
+generated together, level by level, so the damage cannot come from errors piling up over a long story. It comes
+from attention across more chunks than in training, and it grows with the number of levels that attend across
+chunks: $-1\%$ for $G{=}0$, $+6\%$ for $G{=}3$, $+35\%$ for $G{=}5$, and $+71\%$ for B2
+(Figure~\ref{fig:tradeoff}b).
 
 \begin{figure}[t]
   \centering
@@ -308,9 +320,14 @@ $+35\%$ for $G{=}5$, and $+71\%$ for B2 (Figure~\ref{fig:tradeoff}b).
   \label{fig:chunks}
 \end{figure}
 
-\paragraph{Interpretation.} Attention that spans all chunks learns the number of chunks it was trained on. When
-the plan must cover more chunks, every chunk generated under it suffers. Block-NCM confines cross-chunk attention to
+\paragraph{Interpretation.} Attention that spans all chunks fits the number of chunks it was trained on. When
+it must cover more chunks, every chunk generated under it suffers. Block-NCM confines cross-chunk attention to
 a few short coarse levels and leaves most of the model local, so most of the model never sees the change in length.
+Two concrete causes are plausible, and we have not separated them. First, the learned chunk embeddings of chunks 5
+and 6 are never trained and stay at their zero initialisation. Second, cross-chunk levels see rotary positions
+beyond those seen in fine-tuning. Every model receives the untrained embeddings, and B0, which never attends across
+chunks, does not degrade; so both causes would act through cross-chunk attention, consistent with the dependence
+on $G$.
 The choice of $G$ is a trade-off: $G{=}5$ is 1.9 genPPL better than $G{=}3$ at the trained length, and $G{=}3$ is
 nearly unaffected by length. No model extends gracefully, though: text beyond token 512 scores worse than text within
 it for all of them.
@@ -344,16 +361,19 @@ $G{=}5$, $h{=}4$ (local run) & 19.4 & 1.17 & 25.2 \\
 $G{=}3$, $h{=}4$ + plan search (8) & 20.0 & 1.21 & -- \\
 $G{=}5$, $h{=}4$ + plan search (8)$^\ast$ & 17.1 & 1.16 & -- \\
 \bottomrule
-\multicolumn{4}{@{}p{0.95\columnwidth}@{}}{\footnotesize Upper block: halo and $G$ sweeps ($G{=}3$, $h{=}4$ is a
-local run; $h{=}2,8$ and $G{=}5,6$ with halo ran on Kaggle). Lower block: plan search applied to the local runs listed
-just above it. $^\ast$Entropy 4.36$\to$4.32, length 413$\to$406 tokens.}
+\multicolumn{4}{@{}p{0.95\columnwidth}@{}}{\footnotesize Upper block: halo and $G$ sweeps. B0, B2, $G{=}3$ with no
+halo or $h{=}4$, and $G{=}5,6$ with no halo are local runs; $h{=}2,8$ and $G{=}5,6$ with $h{=}4$ ran on Kaggle.
+Lower block: plan search applied to the local runs listed just above it. $^\ast$Entropy 4.36$\to$4.32, length
+413$\to$406 tokens.}
 \end{tabular}
 \end{table}
 
 \paragraph{Halo.} Without halo, the plan alone closes only 38\% of the B0$\to$B2 seam gap ($G{=}3$: 1.39). A halo of
-4 positions brings the seam ratio to 1.19, 95\% of the gap, and gives the best NLL of the one-seed runs. Wider halos
-help a little more (Table~\ref{tab:ablation}). Halo also repairs extrapolation for $G{=}5$ (23.8$\to$20.0 at
-$M{=}6$) but not for $G{=}6$ (23.6).
+4 positions brings the seam ratio to 1.19, 95\% of the gap, and gives the best NLL of the local one-seed runs
+(Appendix~\ref{sec:failures}). Wider halos help a little more ($h{=}2$ vs $h{=}8$, both on Kaggle;
+Table~\ref{tab:ablation}). With halo, the three Kaggle $G{=}5$ seeds hold at $M{=}6$ (20.0--21.0), where the local
+run without halo reached 23.8. That comparison crosses platforms, though, and the local $G{=}5$ run with halo
+reached 25.2, so whether halo repairs extrapolation for $G{=}5$ is not settled. For $G{=}6$ it does not (23.6).
 
 \paragraph{Number of plan levels.} At $M{=}4$, genPPL improves steadily with $G$; at $M{=}6$, $G\ge6$ degrades even
 with halo. $G{=}3$ or $G{=}5$ with halo are the useful operating points.
@@ -386,8 +406,9 @@ released NCM & 16.4 & 14.4$^c$ \\
 Block-NCM $G{=}5$+$h{=}4$ & -- & 19.2 \\
 \quad + plan search (local run) & -- & 17.1 \\
 \bottomrule
-\multicolumn{3}{@{}p{0.95\columnwidth}@{}}{\footnotesize $^a$Long stories only. $^b$End-of-text blocked to match
-our length. $^c$Four independent 128-token openings, not one story: seam ratio 1.25, entropy 4.80; each fresh opening
+\multicolumn{3}{@{}p{0.95\columnwidth}@{}}{\footnotesize $^a$Long stories only. $^b$End-of-text blocked for the
+first 400 tokens: 457 tokens on average, against about 425 for Block-NCM samples, which stop at their first
+end-of-text token. $^c$Four independent 128-token openings, not one story: seam ratio 1.25, entropy 4.80; each fresh opening
 scores well under GPT-2 Large.}
 \end{tabular}
 \end{table}
@@ -395,11 +416,12 @@ scores well under GPT-2 Large.}
 Block-NCM's text is about 2$\times$ worse than the AR model's by genPPL (19.2 vs 9.9 at 512 tokens;
 Table~\ref{tab:gap}). Most of this gap is inherited: the released NCM is already 1.7$\times$ behind the AR model on
 single chunks (16.4 vs 9.7), as in the NCM paper's own comparison (15.41 vs 8.89)~\cite{ncm}. Fine-tuning adds about
-4 genPPL per chunk. About 1.6 of that is a change of style: stories longer than 384 tokens never open with ``Once
-upon a time'' (0\% vs 58\% of all stories), and GPT-2 Large scores real long-story openings 1.10$\times$ higher than
-all openings. The remaining $\approx$2.4 is a cost of our recipe; trained on stories of all lengths, the same recipe
-reaches 17.0 on single chunks (Appendix~\ref{sec:failures}). Part of the AR gap is also style, since TinyStories-33M
-writes mostly ``Once upon a time'' openings.
+4 genPPL per chunk (chunk 1 scores about 21 for every model). About 1.6 of that is a change of style: stories longer
+than 384 tokens never open with ``Once upon a time'' (0\% vs 58\% of all stories), and GPT-2 Large scores real
+long-story openings 1.10$\times$ higher than all openings. The remaining $\approx$2.4 comes from fine-tuning on the
+small long-story subset, not from the recipe itself: trained on stories of all lengths, the same recipe reaches 17.0
+on single chunks, close to the released model (Appendix~\ref{sec:failures}). Part of the AR gap is also style, since
+TinyStories-33M writes mostly ``Once upon a time'' openings.
 
 % =====================================================================
 \section{Related work}
@@ -408,10 +430,16 @@ writes mostly ``Once upon a time'' openings.
 iterative mask-predict decoding~\cite{maskpredict, maskgit} generate many tokens per pass. Discrete diffusion language
 models~\cite{sedd, mdlm} refine all positions over many steps; block diffusion~\cite{bd3lm} generates blocks in
 sequence with diffusion inside each block, which corresponds to our B1. NCM~\cite{ncm} generates coarse to fine over
-a residual code hierarchy~\cite{vqvae, soundstream} in a small fixed number of passes. Block-NCM extends NCM beyond
-its tokenizer's 128-token window without adding passes.
+a residual code hierarchy~\cite{vqvae, soundstream} in a small fixed number of passes. Residual quantisation also
+underlies RQ-Transformer~\cite{rqtransformer}, which predicts each position's stack of codes autoregressively
+across positions; NCM instead generates one level at a time for all positions. Block-NCM extends NCM beyond its
+tokenizer's 128-token window without adding passes.
 
-\paragraph{Planning for parallel long-form generation.} LongWriter's AgentWrite~\cite{longwriter} has an AR model
+\paragraph{Planning for parallel long-form generation.} Writing a plan first and the text second is an old idea.
+Progressive generation~\cite{progressive} expands content keywords into a full passage over several stages, and
+PLANNER~\cite{planner} generates paragraph-level latent embeddings coarse to fine with diffusion, then decodes
+them with an AR model. Skeleton-of-Thought~\cite{sot} prompts an AR model for a short skeleton of its answer and
+then expands the points in parallel to cut latency. LongWriter's AgentWrite~\cite{longwriter} has an AR model
 write an outline and then each paragraph; its ``+Parallel'' variant writes all paragraphs at once from the outline and
 loses coherence. The Parallel Decoder Transformer~\cite{pdt} proposes parallel decoding streams in an AR model that
 coordinate through a shared planner-conditioned latent, without empirical results so far. Block-NCM also shares a
@@ -442,11 +470,18 @@ A parallel drafter of this kind is a natural use for Block-NCM.
         model~\cite{seqkd}, test-time selection (on our weakest $G{=}5$ run, plan search with 8 plans gives $-$2.3 genPPL and
         best-of-8 reranking with TinyStories-33M as the scorer $-$3.6, at 8$\times$ the generation cost), and use as a drafter for
         an AR verifier.
-  \item \textbf{Scale.} One dataset, one 128-token base model, 1,500 fine-tuning steps, lengths up to 768 tokens.
-        The original NCM recipe (batch 2,048, 50k updates) does not fit on our 8\,GB GPU.
+  \item \textbf{Scale.} One dataset, one 128-token base model, lengths up to 768 tokens. Fine-tuning runs 1,500
+        steps of 8 stories, about 10\% of the training stories (less than one epoch). The original NCM recipe
+        (batch 2,048, 50k updates) does not fit on our 8\,GB GPU.
   \item \textbf{Evidence.} The long-sample and matched per-chunk tests use one training seed, and for $G{=}5$ it is
-        the weakest of four runs. genPPL depends on one judge model.
-  \item \textbf{Speed only at low batch.} At large batch an AR model is cheaper per token.
+        the weakest of four runs. Local and Kaggle runs of $G{=}5$ disagree at $M{=}6$ (25.2 vs 20.0--21.0) for a
+        reason we have not found. genPPL depends on one judge model.
+  \item \textbf{Cause of the collapse.} Untrained chunk embeddings and unseen rotary positions both affect the
+        cross-chunk levels beyond the trained length (Section~\ref{sec:length}); we have not tested which one drives
+        the collapse.
+  \item \textbf{Speed only at low batch and moderate length.} At large batch an AR model is cheaper per token. Flat
+        latency holds while a pass does not saturate the GPU; at 7B scale the cost model predicts passes over many
+        chunks become compute-bound (Appendix~\ref{sec:cost}).
   \item \textbf{Fixed schedule.} Every chunk gets the same 11 levels. The NCM paper notes that an input-dependent
         schedule ``would adapt compute to example complexity''~\cite{ncm}; our tokenizer probe shows NCM can skip
         intermediate levels (levels 6$\to$9$\to$11 keep 99.5\% of tokens with 39\% fewer positions;
@@ -457,9 +492,13 @@ A parallel drafter of this kind is a natural use for Block-NCM.
 \section{Conclusion}
 
 Block-NCM generates multi-chunk stories in the same 11 parallel passes that NCM uses for one chunk, 16.5$\times$
-faster than a smaller AR model at batch 1 on the same GPU, with latency that does not grow with story length. Sharing only the coarse levels across chunks, with a small halo
+faster than a smaller AR model at batch 1 on the same GPU, with batch-1 latency that stays flat from 256 to 1,024
+tokens. Sharing only the coarse levels across chunks, with a small halo
 at the seams, nearly matches fully global attention at the trained length and avoids its collapse beyond it. The
 number of shared levels sets a clear trade-off between quality at the trained length and robustness to length.
+
+\paragraph{Code.} Code, training and evaluation scripts, and the full experiment log are available at
+\url{https://github.com/Rishab-Gupta24/block-ncm}.
 
 \paragraph{Use of AI tools.} The author used an AI assistant (Claude Code, Anthropic) to help write code and
 experiment scripts, run and monitor experiments, and edit the text. The author proposed the method, made the design
@@ -503,6 +542,14 @@ decisions, checked the reported numbers against the experiment logs, and takes f
   Unleashing 10,000+ word generation from long context LLMs. arXiv:2408.07055, 2024.
 \bibitem{pdt} L.~Robbins. Parallel Decoder Transformer: Planner-conditioned latent coordination for model-intrinsic
   parallel generation. arXiv:2512.10054, 2025.
+\bibitem{rqtransformer} D.~Lee, C.~Kim, S.~Kim, M.~Cho, and W.-S.~Han. Autoregressive image generation using
+  residual quantization. CVPR, 2022. arXiv:2203.01941.
+\bibitem{progressive} B.~Tan, Z.~Yang, M.~Al-Shedivat, E.~P.~Xing, and Z.~Hu. Progressive generation of long text
+  with pretrained language models. NAACL, 2021. arXiv:2006.15720.
+\bibitem{planner} Y.~Zhang, J.~Gu, Z.~Wu, S.~Zhai, J.~Susskind, and N.~Jaitly. PLANNER: Generating diversified
+  paragraph via latent language diffusion model. NeurIPS, 2023. arXiv:2306.02531.
+\bibitem{sot} X.~Ning, Z.~Lin, Z.~Zhou, Z.~Wang, H.~Yang, and Y.~Wang. Skeleton-of-Thought: Prompting LLMs for
+  efficient parallel generation. ICLR, 2024. arXiv:2307.15337.
 \end{thebibliography}
 
 % =====================================================================
