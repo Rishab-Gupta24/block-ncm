@@ -290,6 +290,48 @@ difference there.
   over all chunks degrades every chunk once the plan covers more chunks than in training. Fewer global levels plus
   halo (G=3 + halo 4) removes most of this, at a cost of about 1–1.5 genPPL at the trained length.
 
+## 2026-11-27: Which mistakes are most common, and where? (`experiments/error_types.py`, CPU, existing samples)
+
+Rule-based detectors over 512 stories per model (M=4, T=1.0) plus 512 real long stories cut into the same
+128-token chunks. Errors per 1,000 words (share of stories with at least one):
+
+| mistake | real | B0 | G3+h4 | G5+h4 | B2 | G5+h4, M=6 | B2, M=6 |
+|---|---|---|---|---|---|---|---|
+| doubled word ("and and", "rainbow rainbow") | 0.13 (4%) | 7.9 (91%) | 8.1 (90%) | **8.2 (93%)** | 8.8 (91%) | 21.8 (97%) | 42.6 (99%) |
+| paragraph with unbalanced quotes | 0.34 (12%) | 6.5 (91%) | 3.8 (71%) | 3.7 (70%) | 3.6 (68%) | 5.4 (83%) | 7.0 (87%) |
+| paragraph stops mid-sentence | 0.04 (1%) | 1.2 (31%) | 0.9 (24%) | 1.0 (29%) | 1.2 (30%) | 2.2 (48%) | 3.0 (58%) |
+| speaker addresses themself ('"No, Ben ..." Ben says') | 0.08 (2%) | 0.7 (20%) | 1.0 (26%) | 0.9 (25%) | 0.9 (21%) | 0.8 (25%) | 0.8 (23%) |
+| name used once, after chunk 1 | 0.03 (1%) | 2.2 (50%) | 1.7 (43%) | 0.9 (24%) | 0.6 (16%) | 1.2 (32%) | 1.4 (34%) |
+| story ends on its own mid-sentence | 0 (0%) | 1.0 (30%) | 0.3 (10%) | 0.4 (13%) | 0.5 (15%) | 0.5 (16%) | 0.5 (17%) |
+| wrong pronoun ("Lily ... He") | 0.05 (2%) | 0.3 (8%) | 0.4 (12%) | 0.35 (10%) | 0.35 (10%) | 0.3 (10%) | 0.3 (9%) |
+| same sentence twice in a row | 0.01 (0%) | 0.2 (7%) | 0.3 (8%) | 0.3 (9%) | 0.3 (8%) | 0.5 (16%) | 0.4 (13%) |
+
+Doubled words in single 128-token chunks: real 0.14; **released NCM 4.9** (4.8 at T=0.8, 4.6 at T=0.9); fine-tuned
+single-chunk gates 4.7–6.1.
+
+Where (G5+h4): errors are spread through the chunks, not concentrated at seams. The 40 characters on either side of a
+seam hold 15% of the text and 18–24% of most error types (1.2–1.6×). The exception is "paragraph stops
+mid-sentence": 34% are near a seam, mostly in the last quarter of a chunk, i.e. a sentence cut off where a chunk
+ends. Doubled words per 1,000 words by chunk: 6.2, 7.9, 8.4, 16.8 (chunk 4 holds the story endings).
+
+Hand reading, 20 random G5+h4 stories (seams marked; `~/ncm/runs/error_read_G5.txt`):
+- broken grammar inside sentences, mostly a missing or wrong word ("It white and white", "She TV off a pillow"): 20/20
+- doubled words: 20/20
+- who-is-who confusion (wrong speaker, a character talking to or seeing themself, "Ben sees Ben fighting"): ~15/20
+- meaning contradictions ("She sees the flames. She is happy", "too big and small"): ~17/20
+- a character switches or appears from nowhere (Sara becomes Lily, a "Tom" in a Lily-and-Ben story): ~13/20.
+  The automatic detector only catches names used once, so it undercounts this.
+
+Takeaways:
+- The most frequent mistake is a **word-level stutter**: doubled and dropped words, about 60× the real rate. It is
+  mostly inherited from the released NCM (4.9 per 1,000 words in single chunks), and lower temperature barely changes
+  it. That points to parallel decoding (neighbouring positions chosen at the same time, so both pick the same word,
+  or neither fills a slot), not to Block-NCM's sharing. Fine-tuning on long stories raises it (6 → 8); beyond the
+  trained length it rises sharply (G5 21.8, B2 42.6), which matches the M=6 genPPL collapse.
+- Second is **who-is-who**: speakers, names and pronouns. Sharing helps (one-off names: B0 2.2 → G5 0.9 → B2 0.6),
+  but self-addressed speech is the same for every model.
+- Seams themselves are a small part: about 1.2–1.6× more errors near a seam, except sentences cut at chunk ends.
+
 ## 2026-11-27: Are untrained chunk embeddings behind the collapse at 6 chunks? (inference only, no training)
 
 Chunk embeddings (`nn.Embedding(8, 768)`, zero init) are only trained for chunks 1–4, so rows 5–8 stay exactly zero.
