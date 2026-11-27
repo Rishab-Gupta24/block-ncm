@@ -290,6 +290,44 @@ difference there.
   over all chunks degrades every chunk once the plan covers more chunks than in training. Fewer global levels plus
   halo (G=3 + halo 4) removes most of this, at a cost of about 1–1.5 genPPL at the trained length.
 
+## 2026-11-27: Independent code review (three small-model reviewers, findings checked by hand)
+
+Three reviewers (Claude Haiku, read-only, given only what the code is meant to do) covered the model core, data and
+training, and evaluation. Every finding below was checked against the code; claims that did not hold are marked.
+
+**New test: attention-mask leak test (`experiments/test_leak.py`), ALL PASSED** on G5+h4, G5, G3+h4, B0 and B2.
+Replacing chunk 0's codes at one level changes other chunks exactly 0.0 at local levels (except the neighbouring
+chunk when a halo is used), changes all chunks through global levels, and never changes any chunk's coarser levels.
+The previous tests only compared two code paths that share the same mask builder, so this was the missing check.
+
+Confirmed issues that matter:
+- **Validation stories come from the released NCM's training file.** `prepare_chunks.py` holds out every 100th
+  story of `train_bpe_8192.bin`, which the released checkpoint (the starting point of every model) was trained on;
+  the held-out `valid_bpe_8192.bin` is on disk but unused. Generation metrics (genPPL, seams, entropy) are not
+  affected. Validation NLL is: absolute values are optimistic, and the comparison between models may be slightly
+  biased. Not yet re-measured on the held-out file.
+- Kaggle scripts: `check()` accepts a run killed without a traceback (model.pt is rewritten at every evaluation,
+  so a step-500 checkpoint would pass). Should require "done in" in the log or step == 1500 in model.pt.
+
+Confirmed but no effect on reported numbers:
+- Best-of-K: an empty story would get AR-NLL 0 and always be picked. No pool story is empty or under 20 words
+  (0 of 2,048), so 15.7 stands.
+- Plan search with a user-given level-0 code (`l0`) would mix up chunks (`fast.py:224`); `l0` is never passed.
+- Validation `nll_global` / `nll_local` are logged as 0.0 instead of NaN for G=0 / G=11.
+- fp16: a non-finite loss stops the run instead of skipping the step; `log.jsonl` is appended on reruns;
+  `sample_eval.py` output names omit some settings, so reruns overwrite; weight decay also hits norms and biases
+  (negligible at lr 3e-5); `--min-len` also filters validation.
+- `error_types.py` rules overcount a little ("mama", "haha", "very very"; a pronoun after a new subject).
+- Test gaps: several checks in `test_fast.py` / `test_equivalence.py` print instead of assert; no M>1 halo test
+  against a reference (now covered by the leak test).
+- Chunk embeddings 5-8 untrained and global positions beyond the trained range at M=6: already found and measured
+  (chunk-embedding test above).
+
+Checked and not a problem: genPPL pools all words before the exponent (`gen_ppl.py`: exp of mean NLL), so a few bad
+stories cannot dominate; the KL reference is stored via `__dict__["ref"]` in `train.py`, so the anchor was active;
+the AR row in the paper uses the 400-token-minimum run (9.93, 457 tokens) and timing from `time_gen.py`; the corruption
+only touches inputs and is off in evaluation; the train/validation split has no overlap.
+
 ## 2026-11-27: Which mistakes are most common, and where? (`experiments/error_types.py`, CPU, existing samples)
 
 Rule-based detectors over 512 stories per model (M=4, T=1.0) plus 512 real long stories cut into the same
