@@ -130,7 +130,10 @@ for _, ch in samples:
 out = a.out or os.path.join(os.path.expanduser(a.run) if a.run else os.path.expanduser("~/ncm/runs/zeroshot"),
                             f"eval_M{a.M}_G{a.G}_t{a.temp}"
                             + (f"_plans{a.n_plans}" if a.n_plans > 1 else "")
-                            + (f"_halo{a.halo}" if a.halo is not None else "") + ".json")
+                            + (f"_halo{a.halo}" if a.halo is not None else "")
+                            # non-default sample counts / seeds get their own file (defaults keep the old names)
+                            + (f"_n{a.n}" if a.n != 256 else "")
+                            + (f"_s{a.seeds.replace(',', '-')}" if a.seeds != "42,0" else "") + ".json")
 os.makedirs(os.path.dirname(out), exist_ok=True)
 json.dump({"seeds": seeds, "samples": samples, "latency": lat}, open(out.replace(".json", "_samples.json"), "w"))
 

@@ -61,9 +61,11 @@ with torch.no_grad():
     rt = model.decode_tokens(codes.view(8, 1, -1))
     match = np.mean([np.mean([a_ == b_ for a_, b_ in zip(r, d)]) for r, d in zip(rt, docs)])
     print(f"[3] tokenizer round-trip token accuracy on 8 chunks: {match:.3f}")
+    assert match > 0.95, "VQ-VAE round trip lost too many tokens"
 
     for M, G in ((1, 0), (2, 0), (2, 3), (2, model.K), (4, 3)):
         out = model.generate(2, M, G, temperature=1.0)
         texts = model.decode_texts(out)
         print(f"[2] M={M} G={G:2d} codes={tuple(out.shape)}  sample: {texts[0][:160]!r}")
+        assert out.shape == (2, M, codes.shape[-1]) and len(texts) == 2 and all(texts), "bad generation output"
 print("all checks passed")

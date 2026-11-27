@@ -129,6 +129,7 @@ class FastChunkedNCM(ChunkedNCM):
         if dense:
             return self._forward_loss_dense(codes, G)
         B, M, L = codes.shape
+        assert M <= self.m_max, f"M={M} chunks but only {self.m_max} chunk embeddings"
         dev = codes.device
         flat = codes.reshape(B * M, L)
         with torch.no_grad():
@@ -221,7 +222,9 @@ class FastChunkedNCM(ChunkedNCM):
         n = n_plans if 0 < G < self.K else 1
         Bn = B * n
         D = self.vqvae.embed_dim
-        idx = l0.repeat_interleave(n, 0) if l0 is not None else self.sample_l0(Bn * M, device)
+        # rows are document-major (row = doc * M + chunk); repeat whole documents, not single chunk rows
+        idx = (l0.view(B, M, -1).repeat_interleave(n, 0).reshape(Bn * M, -1) if l0 is not None
+               else self.sample_l0(Bn * M, device))
         z_hat = torch.zeros(Bn * M, self.chunk_len, D, device=device)
         out = [idx]
         pre = self._prefix_emb(Bn, device)

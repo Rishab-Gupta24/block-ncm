@@ -71,7 +71,8 @@ with torch.no_grad():
         logits = slm(ids, attention_mask=mask).logits[:, :-1].float()
         lp = torch.nn.functional.cross_entropy(logits.transpose(1, 2), ids[:, 1:], reduction="none")
         m = mask[:, 1:]
-        nll += ((lp * m).sum(1) / m.sum(1).clamp(min=1)).tolist()
+        mean = (lp * m).sum(1) / m.sum(1).clamp(min=1)
+        nll += mean.masked_fill(m.sum(1) == 0, float("inf")).tolist()  # an empty story must never be picked
 torch.cuda.synchronize()
 score_time = time.time() - t0
 del slm

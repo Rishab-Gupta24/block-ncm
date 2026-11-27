@@ -191,6 +191,7 @@ class ChunkedNCM(nn.Module):
         if dense:
             return self._forward_loss_dense(codes, G)
         B, M, L = codes.shape
+        assert M <= self.m_max, f"M={M} chunks but only {self.m_max} chunk embeddings"
         dev = codes.device
         flat = codes.reshape(B * M, L)
         with torch.no_grad():

@@ -328,6 +328,23 @@ stories cannot dominate; the KL reference is stored via `__dict__["ref"]` in `tr
 the AR row in the paper uses the 400-token-minimum run (9.93, 457 tokens) and timing from `time_gen.py`; the corruption
 only touches inputs and is off in evaluation; the train/validation split has no overlap.
 
+**Small fixes applied (same day).** None changes a reported number; the trained models are untouched.
+- `train.py`: NLL for an absent level type is logged as `null` instead of 0.0; `log.jsonl` is rewritten per run
+  instead of appended; a non-finite fp16 loss skips the step and lowers the gradient scale (the run stops after 10
+  skips; bf16 and fp32 still stop at once). Not changed on purpose: weight decay on norms and biases, and `--min-len`
+  filtering validation too, because changing either would make new runs differ from the paper's runs.
+- Kaggle scripts: `check()` also requires "done in" in the training log for a model.pt.
+- `fast.py`: plan search keeps a given level-0 code with its own document and chunk; `forward_loss` asserts
+  M <= 8 (the number of chunk embeddings).
+- `rerank_bestofk.py`: an empty story scores +inf, so it is never picked.
+- `sample_eval.py`: a non-default `--n` or `--seeds` goes into the output file name (default names unchanged).
+- `error_types.py`: tighter rules (see the mistake table below).
+- `test_fast.py` / `test_equivalence.py`: the checks that only printed now assert; new test that plan search keeps
+  the given level-0 codes in place.
+Checks after the fixes: test_fast, test_equivalence and the leak test (G5+h4, B0, B2) all pass; short training runs
+at G=0 (fp16), G=5 + halo 4 and G=11 finish and write the expected log. The fp16 skip path was not triggered in
+these runs, so it is untested.
+
 ## 2026-11-27: Which mistakes are most common, and where? (`experiments/error_types.py`, CPU, existing samples)
 
 Rule-based detectors over 512 stories per model (M=4, T=1.0) plus 512 real long stories cut into the same
@@ -335,14 +352,20 @@ Rule-based detectors over 512 stories per model (M=4, T=1.0) plus 512 real long 
 
 | mistake | real | B0 | G3+h4 | G5+h4 | B2 | G5+h4, M=6 | B2, M=6 |
 |---|---|---|---|---|---|---|---|
-| doubled word ("and and", "rainbow rainbow") | 0.13 (4%) | 7.9 (91%) | 8.1 (90%) | **8.2 (93%)** | 8.8 (91%) | 21.8 (97%) | 42.6 (99%) |
+| doubled word ("and and", "rainbow rainbow") | 0.02 (1%) | 7.6 (90%) | 7.7 (89%) | **7.8 (93%)** | 8.2 (91%) | 21.2 (97%) | 41.7 (99%) |
 | paragraph with unbalanced quotes | 0.34 (12%) | 6.5 (91%) | 3.8 (71%) | 3.7 (70%) | 3.6 (68%) | 5.4 (83%) | 7.0 (87%) |
 | paragraph stops mid-sentence | 0.04 (1%) | 1.2 (31%) | 0.9 (24%) | 1.0 (29%) | 1.2 (30%) | 2.2 (48%) | 3.0 (58%) |
 | speaker addresses themself ('"No, Ben ..." Ben says') | 0.08 (2%) | 0.7 (20%) | 1.0 (26%) | 0.9 (25%) | 0.9 (21%) | 0.8 (25%) | 0.8 (23%) |
 | name used once, after chunk 1 | 0.03 (1%) | 2.2 (50%) | 1.7 (43%) | 0.9 (24%) | 0.6 (16%) | 1.2 (32%) | 1.4 (34%) |
 | story ends on its own mid-sentence | 0 (0%) | 1.0 (30%) | 0.3 (10%) | 0.4 (13%) | 0.5 (15%) | 0.5 (16%) | 0.5 (17%) |
-| wrong pronoun ("Lily ... He") | 0.05 (2%) | 0.3 (8%) | 0.4 (12%) | 0.35 (10%) | 0.35 (10%) | 0.3 (10%) | 0.3 (9%) |
+| wrong pronoun ("Lily ... He") | 0.01 (0%) | 0.16 (5%) | 0.29 (8%) | 0.25 (7%) | 0.24 (7%) | 0.20 (6%) | 0.16 (5%) |
 | same sentence twice in a row | 0.01 (0%) | 0.2 (7%) | 0.3 (8%) | 0.3 (9%) | 0.3 (8%) | 0.5 (16%) | 0.4 (13%) |
+
+Updated after the code review (same day): repeats children's stories use on purpose ("very very", "knock knock"),
+baby words ("mama", "haha") and pronouns that may refer to a second character ("Lily saw a man. He ...") are no
+longer counted. Doubled words dropped by about 4% (G5+h4 8.2 → 7.8, real 0.13 → 0.02) and wrong pronouns by about a
+third (G5+h4 0.35 → 0.25). The ranking of mistakes and every conclusion below are unchanged. The single-chunk
+numbers in the next line and the per-chunk counts were measured with the first version of the rules.
 
 Doubled words in single 128-token chunks: real 0.14; **released NCM 4.9** (4.8 at T=0.8, 4.6 at T=0.9); fine-tuned
 single-chunk gates 4.7–6.1.

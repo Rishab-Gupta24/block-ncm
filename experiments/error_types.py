@@ -64,6 +64,16 @@ Once One Then When But And So If Oh Wow Yes No Okay Ok What Why How Where Who Lo
 Sorry Come Go This That There Here Do Don't Can Can't Will Won't Is Are Was Were Mr Mrs Miss Sir Ow Yay Hooray Good
 Bye Stop Help Hey Ouch Yuck Uh Hmm Ha Mama Papa Granny Nana Sure Maybe Today Every Some After Before Now Not Be
 Just Very Lets Let's Be Don't Did Does Have Had Has All Look See Wait Hurry Remember Come Thank Mister Teacher""".split())
+# words that children's stories repeat on purpose ("very very", "knock knock") and baby words that are a fused
+# double by spelling ("mama", "haha"): not counted as mistakes
+OK_DOUBLE = set("""very so no yes ha haha ho hee la bye knock tick tock choo beep boom bang ding dong woof meow moo quack
+tweet chirp oink baa buzz hop round more far up down again faster higher louder please help stop wait come go run hurry
+yay hooray wow oh ah oops yum splash pop tap""".split())
+OK_FUSED = set("""mama papa dada nana haha hehe hoho baba booboo tutu yoyo coco choochoo bonbon dodo tata mimi lala
+bebe kiki pawpaw""".split())
+# gendered nouns: a sentence that mentions one also introduces a second possible referent for He / She
+MASC_NOUN = r'\b(?:man|boy|dad|daddy|father|brother|king|prince|grandpa|uncle|mr|husband|son|he|him|his)\b'
+FEM_NOUN = r'\b(?:woman|girl|mom|mommy|mother|sister|queen|princess|grandma|aunt|mrs|lady|wife|daughter|she|her)\b'
 SAY = r'(?:says|said|asks|asked|cries|cried|yells|yelled|shouts|shouted|replies|replied|answers|answered|whispers|whispered|exclaims|exclaimed)'
 
 
@@ -76,10 +86,12 @@ def detect(chs, ended):
     errs = []
     # 1. doubled word: "the the", "rainbow rainbow"
     for m in re.finditer(r"\b([A-Za-z']+)\s+\1\b", text, flags=re.I):
-        errs.append(('doubled word ("the the")', m.start(2) if m.lastindex and m.lastindex > 1 else m.end() - len(m.group(1))))
+        if m.group(1).lower() not in OK_DOUBLE:
+            errs.append(('doubled word ("the the")', m.end() - len(m.group(1))))
     # 2. fused double inside one word: "OwOw", "stopStop", "Don't't"
     for m in re.finditer(r"\b([A-Za-z]{2,})\1\b|n't't\b", text, flags=re.I):
-        errs.append(('fused double ("stopStop")', m.start()))
+        if m.group().lower() not in OK_FUSED:
+            errs.append(('fused double ("stopStop")', m.start()))
     # 3. paragraph with an odd number of quote marks
     off = 0
     lines = text.split('\n')
@@ -104,6 +116,13 @@ def detect(chs, ended):
         mb = re.match(r'(He|She)\b', sb)
         if ma and mb and ' and ' not in sa[:30]:
             n = ma.group(1)
+            rest = sa[ma.end(1):]
+            # skip when the first sentence brings in another name or someone of the pronoun's gender ("Lily saw
+            # a man. He ..."): the pronoun may refer to them
+            if any(w in FEM or w in MASC for w in re.findall(r'\b[A-Z][a-z]+\b', rest)):
+                continue
+            if re.search(MASC_NOUN if mb.group(1) == 'He' else FEM_NOUN, rest, flags=re.I):
+                continue
             if (n in FEM and mb.group(1) == 'He') or (n in MASC and mb.group(1) == 'She'):
                 errs.append(('wrong pronoun (Lily ... He)', b.start()))
     # 7. same sentence twice in a row

@@ -57,15 +57,24 @@ with torch.no_grad():
     fast.halo = 0
     l4, s4 = fast.forward_loss(codes, 3)
     print(f"[2] M=4 G=3: halo=8 {lh4.item():.6f} vs halo=0 {l4.item():.6f} (should differ; untrained halo)")
+    assert abs(lh4.item() - l4.item()) > 1e-6, "halo=8 had no effect at M=4"
 
     for G in (0, 3, ref.K):
         torch.manual_seed(1); g1 = ref.generate(2, 2, G, device=dev)
         torch.manual_seed(1); g2 = fast.generate(2, 2, G, device=dev)
         print(f"[3] generate M=2 G={G:2d}: code match {(g1 == g2).float().mean().item():.4f}")
+        assert g1.shape == g2.shape and (g1 == g2).float().mean().item() > 0.99, "fast generation differs"
     torch.manual_seed(2); gp = fast.generate(2, 2, 3, device=dev, n_plans=4)
     print(f"[4] plan search n_plans=4: codes {tuple(gp.shape)}")
+    assert gp.shape == g1.shape, "plan search changed the output shape"
+    # a given level-0 code must stay with its own document and chunk (rows are doc-major)
+    l0 = fast.sample_l0(2 * 4, dev)
+    torch.manual_seed(4); gl = fast.generate(2, 4, 3, device=dev, n_plans=3, l0=l0)
+    assert torch.equal(gl[:, :, :l0.shape[1]], l0.view(2, 4, -1)), "plan search mixed up the given level-0 codes"
+    print("[4] plan search keeps the given level-0 codes in place")
     fast.halo = 8; torch.manual_seed(3); gh = fast.generate(2, 4, 3, device=dev); fast.halo = 0
     print(f"[4] halo=8 generation M=4: codes {tuple(gh.shape)}")
+    assert gh.shape == (2, 4, g1.shape[-1])
 
 for name, m in (() if a.no_timing else (("ChunkedNCM", ref), ("FastChunkedNCM", fast))):
     m.train()

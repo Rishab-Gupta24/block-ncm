@@ -54,7 +54,7 @@ What this table says:
 
 | mistake (G=5 + halo 4, 4 chunks) | how often | real stories | what it costs |
 |---|---|---|---|
-| doubled word ("and and") | 8.2 per 1,000 words, 93% of stories | 0.13 | deleting all of them: genPPL 19.38 → 18.79 (−0.6; a lower bound, since a correct replacement would gain more) |
+| doubled word ("and and") | 7.8 per 1,000 words, 93% of stories | 0.02 | deleting all of them: genPPL 19.38 → 18.79 (−0.6; a lower bound, since a correct replacement would gain more) |
 | missing or wrong word ("It white and white") | 20 of 20 stories read by hand | — | not measurable by rule; likely most of the gap |
 | meaning contradictions ("She sees the flames. She is happy") | ~17 of 20 | — | — |
 | who-is-who: wrong speaker, talking to oneself | ~15 of 20; self-address 25% of stories for **every** model, even B2 | 2% | — |
@@ -266,7 +266,7 @@ has been sent.
 | evaluate at 8–12 chunks | no data that long in TinyStories |
 | test power switching on the lab's Jetson Nano | unverified that the lab has one; the original Jetson Nano lacks bf16/fp8 |
 | cites HaloBlock, dLoop, FLARE, RouterWise, CoMem, DVD-Quant | none verified; open each before citing |
-| "stutters ~4.9 per 1k" for G=5 + halo 4 | 8.2 for G=5 + halo 4; 4.9 is the released NCM on single chunks |
+| "stutters ~4.9 per 1k" for G=5 + halo 4 | 7.8 for G=5 + halo 4; 4.9 is the released NCM on single chunks |
 | fixing stutters drives the seam ratio to 1.0 | doubled words are mostly inside chunks (22% near seams vs 15% of text) |
 | sparse edits "mathematically cannot create new stutters" | only if the replacement must differ from its neighbours; add that rule |
 | who-is-who errors come from "names blurred in compressed codes" | a guess; self-addressed speech is equally common with full sharing (B2) |

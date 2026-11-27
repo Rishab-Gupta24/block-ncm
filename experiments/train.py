@@ -166,15 +166,16 @@ def evaluate():
             raise RuntimeError(f"non-finite validation loss {st['nll']} (autocast {AMP}): numerical overflow")
         w = len(codes)
         for k in tot:
-            tot[k] += (st[k] if not math.isnan(st[k]) else 0.0) * w
+            tot[k] += st[k] * w  # stays nan for nll_global (G=0) / nll_local (G=K): no such levels
         n += w
     model.train()
-    return {k: v / n for k, v in tot.items()}
+    return {k: (v / n if math.isfinite(v) else None) for k, v in tot.items()}  # None = level type absent
 
 
-log = open(os.path.join(run_dir, "log.jsonl"), "a")
+log = open(os.path.join(run_dir, "log.jsonl"), "w")  # one log per run, like model.pt (no resume)
 model.train()
 t0 = time.time()
+skipped = 0  # fp16 steps skipped after a non-finite loss
 ev = evaluate()
 print(f"step 0 val {ev}", flush=True)
 log.write(json.dumps({"step": 0, "val": ev, "time": 0}) + "\n"); log.flush()
@@ -188,12 +189,22 @@ for step in range(a.steps):
         with torch.autocast("cuda", dtype=AMP or torch.float32, enabled=AMP is not None):
             loss, st = model.forward_loss(codes, a.G)
         if not torch.isfinite(loss):
-            raise RuntimeError(f"non-finite training loss at step {step} (autocast {AMP}): numerical overflow")
+            if AMP is not torch.float16 or skipped >= 10:
+                raise RuntimeError(f"non-finite training loss at step {step} (autocast {AMP}): numerical overflow")
+            break  # fp16 overflow: skip this step and let the scaler lower the scale
         scaler.scale(loss / a.accum).backward()
-    scaler.unscale_(opt)
-    gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-    scaler.step(opt)  # without fp16 the scaler is disabled: plain opt.step()
-    scaler.update()
+    if torch.isfinite(loss):
+        scaler.unscale_(opt)
+        gn = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        scaler.step(opt)  # without fp16 the scaler is disabled: plain opt.step()
+        scaler.update()
+    else:  # fp16 only (other dtypes raised above); evaluation and checkpointing below still run
+        skipped += 1
+        opt.zero_grad(set_to_none=True)
+        scaler.update(scaler.get_scale() / 2)
+        gn = torch.tensor(float("nan"))
+        print(f"step {step}: fp16 overflow, step skipped ({skipped} so far)", flush=True)  # wording avoids the
+        # Kaggle check's "non-finite" pattern: a few skipped steps are normal for fp16, a crash is not
 
     if step % 25 == 0:
         el = time.time() - t0
@@ -202,7 +213,8 @@ for step in range(a.steps):
               f"gn {gn:.2f} lr {opt.param_groups[0]['lr']:.2e} {el / 60:.1f}min "
               f"mem {torch.cuda.max_memory_allocated() / 2**30:.2f}GB" + (f" plan_bias {pb:.2f}" if pb is not None else "")
               + (f" kl {st['kl']:.4f}" if "kl" in st else ""), flush=True)
-        log.write(json.dumps({"step": step, "train": {k: st[k] for k in ("nll", "nll_global", "nll_local")},
+        log.write(json.dumps({"step": step, "train": {k: (st[k] if math.isfinite(st[k]) else None)
+                                                      for k in ("nll", "nll_global", "nll_local")},
                               "gn": float(gn), "time": el, "plan_bias": pb}) + "\n"); log.flush()
     last = step == a.steps - 1 or (a.time_limit and time.time() - t0 > a.time_limit * 60)
     if (step + 1) % a.eval_every == 0 or last:

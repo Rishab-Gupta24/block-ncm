@@ -30,7 +30,8 @@ FAIL=0
 log() { echo "=== $* $(date -u +%H:%M:%S)" | tee -a $OUT/progress.txt; }
 quiet() { grep -v "parameter count" || true; }
 check() {
-  if [ -s "$1" ] && ! grep -qiE "loss nan|non-finite|Traceback" "$2"; then echo "    ok: $1" | tee -a $OUT/progress.txt
+  # a training run must also have finished: model.pt is rewritten at every evaluation, so it exists after a kill
+  if [ -s "$1" ] && ! grep -qiE "loss nan|non-finite|Traceback" "$2" && { [[ "$1" != *model.pt ]] || grep -q "^done in" "$2"; }; then echo "    ok: $1" | tee -a $OUT/progress.txt
   else echo "    MISSING: $1 -- last lines of $2:" | tee -a $OUT/progress.txt; tail -30 "$2" | tee -a $OUT/progress.txt; FAIL=1; fi
 }
 
