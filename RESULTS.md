@@ -332,6 +332,20 @@ Takeaways:
   but self-addressed speech is the same for every model.
 - Seams themselves are a small part: about 1.2–1.6× more errors near a seam, except sentences cut at chunk ends.
 
+**Deletion test: how much genPPL do doubled words cost?** (`experiments/dedup_test.py`, GPT-2 Large, same scorer as
+`sample_eval.py`.) Every exact adjacent repeat is removed ("and and" → "and") and the stories are re-scored:
+
+| | words removed | genPPL before | after | change |
+|---|---|---|---|---|
+| G5 + halo 4, M=4 (local, 2 × 256) | 0.83% | 19.38 | 18.79 | −0.59 (−3%) |
+| G5 + halo 4, M=6 (local, 2 × 256) | 2.33% | 25.19 | 23.97 | −1.21 (−5%) |
+| real stories (control) | 0.02% | 6.080 | 6.081 | 0 |
+
+Doubled words are the most *frequent* visible mistake but cost only about 0.6 genPPL at the trained length, a small
+part of the gap to AR (19.2 vs 9.9). Most of the gap is elsewhere: missing or wrong words and meaning errors inside
+chunks, which the rule cannot fix. The deletion rule itself is free (no extra pass), so any trained correction step
+must beat −0.6 to justify its pass.
+
 ## 2026-11-27: Are untrained chunk embeddings behind the collapse at 6 chunks? (inference only, no training)
 
 Chunk embeddings (`nn.Embedding(8, 768)`, zero init) are only trained for chunks 1–4, so rows 5–8 stay exactly zero.
@@ -342,11 +356,33 @@ Test: copy a trained row into rows 5–8 and re-run `sample_eval.py` at M=6 (2 s
 | B2 original (`b2c_M4_G11`) | 33.53 ± 2.34 (35.18, 31.87) | 1.153 | 13.3% | 4.276 | 480 |
 | **B2, rows 5–8 = chunk 4's row** | **26.72 ± 0.09** (26.66, 26.79) | 1.166 | 5.7% | 4.316 | 479 |
 | B2, rows 5–8 = mean of rows 1–4 | 30.91 ± 2.11 (32.40, 29.41) | 1.161 | 12.5% | 4.289 | 478 |
-| G=5 + halo 4 original (local) | 25.19 | | | | |
-| G=5 + halo 4, rows 5–8 = chunk 4's row | (out of GPU memory; to rerun) | | | | |
+| G=5 + halo 4 original (local) | 25.19 ± 1.01 (24.47, 25.90) | 1.193 | 8.4% | 4.291 | 473 |
+| **G=5 + halo 4, rows 5–8 = chunk 4's row** | **22.74 ± 0.52** (22.37, 23.10) | 1.196 | 4.1% | 4.318 | 467 |
 
 Copying chunk 4's row helps more than the mean of rows 1–4 (26.7 vs 30.9), and the mean variant keeps the original
 share of stories reaching chunk 6 (12.5%), so its smaller gain is not explained by stories ending earlier.
+
+Matched per-chunk test (`score_chunks.py`, same protocol as "Matched per-chunk test" below; chunks 1–4 of the 6-chunk
+stories, T=1.0):
+
+| B2 at M=6 | c1 | c2 | c3 | c4 |
+|---|---|---|---|---|
+| original | 35.3 | 30.7 | 28.8 | 33.1 |
+| rows 5–8 = chunk 4's row | **28.1** | **24.7** | **24.3** | **26.7** |
+| rows 5–8 = mean of rows 1–4 | 32.4 | 28.5 | 27.1 | 31.6 |
+| (M=4, trained length) | 20.6 | 18.4 | 17.7 | 21.0 |
+
+| G=5 + halo 4 at M=6 (local run) | c1 | c2 | c3 | c4 |
+|---|---|---|---|---|
+| original | 28.6 | 23.7 | 22.4 | 23.5 |
+| rows 5–8 = chunk 4's row | **24.9** | **22.2** | **20.2** | **21.6** |
+| (M=4, trained length) | 21.2 | 18.6 | 18.5 | 19.1 |
+
+Chunk 1 improves too (B2 35.3 → 28.1, G5 28.6 → 24.9), and nothing has been written before chunk 1, so the gain is
+not from stories ending earlier. The untrained embeddings of chunks 5–6 damage the whole plan; filling them in removes
+about half of the damage for both models (chunk 1 above its M=4 value: B2 14.7 → 7.5, G5 7.4 → 3.7). Whole-story
+genPPL for G5 + halo 4 at M=6 goes 25.2 → 22.7 (M=4: 19.4 on the same local run), but fewer stories reach chunk 6
+(4.1% vs 8.4%). Not added to Paper 1 (kept as is); evidence for mixed-length training in Paper 2.
 
 - Filling the embeddings in removes about half of B2's collapse (33.5 → 26.7; M=4 is 18.7). The rest is probably
   unseen rotary positions in the cross-chunk levels. Caveat: fewer samples reach chunk 6 (5.7% vs 13.3%), so part
