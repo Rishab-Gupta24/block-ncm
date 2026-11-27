@@ -341,9 +341,12 @@ Test: copy a trained row into rows 5–8 and re-run `sample_eval.py` at M=6 (2 s
 |---|---|---|---|---|---|
 | B2 original (`b2c_M4_G11`) | 33.53 ± 2.34 (35.18, 31.87) | 1.153 | 13.3% | 4.276 | 480 |
 | **B2, rows 5–8 = chunk 4's row** | **26.72 ± 0.09** (26.66, 26.79) | 1.166 | 5.7% | 4.316 | 479 |
-| B2, rows 5–8 = mean of rows 1–4 | (running) | | | | |
+| B2, rows 5–8 = mean of rows 1–4 | 30.91 ± 2.11 (32.40, 29.41) | 1.161 | 12.5% | 4.289 | 478 |
 | G=5 + halo 4 original (local) | 25.19 | | | | |
-| G=5 + halo 4, rows 5–8 = chunk 4's row | (queued) | | | | |
+| G=5 + halo 4, rows 5–8 = chunk 4's row | (out of GPU memory; to rerun) | | | | |
+
+Copying chunk 4's row helps more than the mean of rows 1–4 (26.7 vs 30.9), and the mean variant keeps the original
+share of stories reaching chunk 6 (12.5%), so its smaller gain is not explained by stories ending earlier.
 
 - Filling the embeddings in removes about half of B2's collapse (33.5 → 26.7; M=4 is 18.7). The rest is probably
   unseen rotary positions in the cross-chunk levels. Caveat: fewer samples reach chunk 6 (5.7% vs 13.3%), so part

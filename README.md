@@ -35,7 +35,7 @@ At batch size 1, Block-NCM writes a 512-token story **16.5× faster** than a sma
 GPU (3.2× at batch 32). Its latency stays at about **0.37 s from 256 to 1,024 tokens**, while generating chunks one
 after another becomes up to 9.4× slower.
 
-<p align="center"><img src="paper/figures/fig_speed.png" width="62%" alt="Latency vs story length and time per story vs batch size"/></p>
+<p align="center"><img src="paper/figures/fig_speed.png" width="50%" alt="Latency vs story length and time per story vs batch size"/></p>
 
 ### Robust beyond the trained length
 
@@ -49,7 +49,7 @@ Sharing every level (B2) gives the best text at the trained length but collapses
 512-token TinyStories stories (4 chunks), temperature 1.0, mean over three training seeds. genPPL is scored by
 GPT-2 Large (lower is better); seams compare genPPL across chunk boundaries with inside chunks (1.0 = no seam).
 
-| Model | Passes | genPPL, 4 chunks | Seams | genPPL, 6 chunks (unseen length) | Time per story (batch 1) |
+| Model | Passes | genPPL (4 chunks) | Seams | genPPL (6 chunks, unseen) | Time / story |
 |---|---|---|---|---|---|
 | Real stories | – | 6.1 | 1.01 | – | – |
 | AR, TinyStories-33M | ≈512 | **9.9** | 1.04 | – | 6.20 s |
