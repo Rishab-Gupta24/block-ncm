@@ -51,7 +51,7 @@ pip install -q omegaconf hydra-core "transformers>=4.51" huggingface_hub regex 2
 log "download checkpoint and data"
 python - <<EOF
 from huggingface_hub import snapshot_download
-snapshot_download("hazyresearch/ncm-checkpoints", allow_patterns=["tinystories/*"], local_dir="$NCM_ROOT/checkpoints")
+snapshot_download("hazyresearch/ncm-checkpoints", revision="d342ce8aaea58830eef3b8ad473664673e41f692", allow_patterns=["tinystories/*"], local_dir="$NCM_ROOT/checkpoints")
 snapshot_download("hazyresearch/ncm-datasets", repo_type="dataset",
                   allow_patterns=["tinystories/train_bpe_8192*"], local_dir="$NCM_ROOT/data")
 EOF

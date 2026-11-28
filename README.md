@@ -103,8 +103,14 @@ git clone https://github.com/Rishab-Gupta24/block-ncm && cd block-ncm
 ```
 
 Download `tinystories/*` from [`hazyresearch/ncm-checkpoints`](https://huggingface.co/hazyresearch/ncm-checkpoints)
-into `~/ncm/checkpoints/tinystories`, and `tinystories/train_bpe_8192.{bin,_offsets.npy}` from
+**at revision `d342ce8aaea58830eef3b8ad473664673e41f692`** into `~/ncm/checkpoints/tinystories`, and
+`tinystories/train_bpe_8192.{bin,_offsets.npy}` from
 [`hazyresearch/ncm-datasets`](https://huggingface.co/datasets/hazyresearch/ncm-datasets) into `~/ncm/data/tinystories`.
+
+The revision matters. On 2026-11-23 HazyResearch replaced the TinyStories generator and its VQ-VAE codec on
+`main`. Every Block-NCM model here was trained on the earlier codec's codes; decoding them with the new codec gives
+broken stories (genPPL about 189 instead of 19.6). In Python:
+`snapshot_download("hazyresearch/ncm-checkpoints", revision="d342ce8aaea58830eef3b8ad473664673e41f692", allow_patterns=["tinystories/*"], local_dir=...)`.
 
 ```bash
 export NCM_ROOT=~/ncm

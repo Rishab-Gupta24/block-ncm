@@ -535,6 +535,12 @@ What the third seed settles:
   **Resolved 2026-11-27 (Block-ncm-testing-p2, RESULTS.md):** it is bf16 generation. Same model, script and seeds:
   bf16 25.10, fp32 21.72 (in line with the Kaggle seeds); B2 at M=6 33.63 vs 30.94; at M=4 the effect is small
   (19.60 vs 19.07). Paper 1's claims are unchanged (its M=6 table uses the Kaggle means); not added to the paper text.
+- **Reproduction note (2026-11-28):** on 2026-11-23 HazyResearch replaced the TinyStories generator and VQ-VAE
+  codec on `main` of `hazyresearch/ncm-checkpoints`. All runs above used the earlier revision `d342ce8` (local copy
+  hashes match it; the Kaggle seeds ran before the change). Decoding this seed-2 G=5 + halo 4 model with the new
+  codec gives genPPL 189 (fp16 189.3, fp32 189.2, entropy 3.23; Paper 2 diagnostic `kaggle/diag_precision.sh`), so
+  every download now pins `revision="d342ce8aaea58830eef3b8ad473664673e41f692"` (kaggle scripts, README). The
+  numbers in this file stand; not added to the paper text.
 
 ## 2026-11-20: Second seed of the main models (Kaggle Version 7, `kaggle/run_seed.sh`, `--seed 1`)
 
